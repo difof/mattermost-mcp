@@ -1,5 +1,11 @@
 # @bryanberger/mattermost-mcp
 
+## 0.2.1
+
+### Patch Changes
+
+- [`fd203df`](https://github.com/BryanBerger98/mattermost-mcp/commit/fd203df4f1289ab04e5fe0874657fe3fc17fbd04) Thanks [@BryanBerger98](https://github.com/BryanBerger98)! - Releases are now published via npm trusted publishing (OIDC) with automatic provenance. No functional changes to the server or tools.
+
 ## 0.2.0
 
 ### Minor Changes
