@@ -1,7 +1,17 @@
 # mattermost-mcp
 
 MCP server (stdio) exposing the Mattermost REST API v4 as tools, for self-hosted instances.
-Scope + tool catalog: `SCOPE.md`. Phases + verified endpoint map: `PLAN.md` (read on demand).
+User docs, tool catalog, and configuration reference live in `README.md`.
+
+## Scope
+
+Goals: let an agent read/write messages, navigate teams & channels, manage membership and read
+state, look up users and presence, and upload/retrieve files — against a self-hosted instance, with
+three interchangeable auth modes (`pat | password | oauth2`). Writes exist but are guardrail-gated
+(safe by default).
+
+Non-goals (v1): real-time WebSocket subscriptions, admin/system console, plugins,
+webhooks/slash-command provisioning, compliance/data-retention, Boards/Playbooks/Calls.
 
 ## Commands
 
@@ -23,14 +33,19 @@ Scope + tool catalog: `SCOPE.md`. Phases + verified endpoint map: `PLAN.md` (rea
 - Validate every tool input with a zod schema before use.
 - All writes go through `src/guardrails.ts`. Destructive tools (`delete_post`, `archive_channel`, `remove_member`) require arg `confirm: true` AND env `MM_ALLOW_DESTRUCTIVE=true`. `MM_READ_ONLY=true` disables all writes.
 - Surface Mattermost API errors verbatim (status code + message). Do not swallow.
-- IMPORTANT: never invent API paths. Use only endpoints verified in `PLAN.md` Appendix A.
+- IMPORTANT: never invent API paths. Use only `@mattermost/client` Client4 methods (verify in `node_modules`) or REST v4 endpoints documented at https://api.mattermost.com.
 - `edit_post` uses `PUT /posts/{id}/patch` (not full replace). `send_dm` body is a JSON array of user ids (2 direct / 3–8 group).
 - Auth modes: `pat | password | oauth2`. Password session token comes from the `Token` response header.
 
 ## Layout
 
-- `src/index.ts` — server bootstrap (stdio)
+- `src/index.ts` — CLI entry: dispatches `login`/`status`/`logout`/`--help` or starts the server
+- `src/server.ts` — MCP server bootstrap (stdio)
+- `src/commands/` — CLI subcommands (`login`, `status`, `logout`)
 - `src/config.ts` — env parsing + validation (zod)
+- `src/credentials.ts` — saved-login store (0600) + `resolveConfig` (env overrides saved creds)
+- `src/paths.ts` — config-dir / credentials-file locations (XDG-aware)
+- `src/prompt.ts` — dependency-free interactive stdin helpers (masked secret)
 - `src/mattermost/` — `Client4` wrapper + auth strategies
 - `src/guardrails.ts` — read-only / destructive / allowlist checks
 - `src/tools/` — tool defs per domain (messaging, channels, users, files) + `registry.ts`

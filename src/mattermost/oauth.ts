@@ -8,11 +8,11 @@
 import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { z } from "zod";
 import type { AuthConfig } from "../config.js";
+import { configDir } from "../paths.js";
 import { log } from "../log.js";
 
 const USER_AGENT = "mattermost-mcp/0.1.0";
@@ -142,11 +142,6 @@ function refresh(
 }
 
 // --- Token cache (OS config dir, 0600) ---------------------------------------
-
-function configDir(): string {
-  const xdg = process.env.XDG_CONFIG_HOME?.trim();
-  return join(xdg && xdg.length > 0 ? xdg : join(homedir(), ".config"), "mattermost-mcp");
-}
 
 /** Per-(server, client) cache path. Keyed by a hash to avoid leaking either. */
 export function tokenCacheFile(url: string, clientId: string): string {

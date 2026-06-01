@@ -17,7 +17,8 @@ import { log } from "../log.js";
 
 const USER_AGENT = "mattermost-mcp/0.1.0";
 
-function buildClient(url: string, timeoutMs: number): Client4 {
+/** Construct a headless {@link Client4} (Bearer-only, cookies off, per-request timeout). */
+export function buildClient(url: string, timeoutMs: number): Client4 {
   const client = new mattermost.Client4();
   client.setUrl(url);
   client.setUserAgent(USER_AGENT);

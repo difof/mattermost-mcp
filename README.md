@@ -30,7 +30,21 @@ to stderr.
 - A self-hosted Mattermost server with a user account and credentials (PAT, login/password, or an
   OAuth2 application)
 
-## Install & Build
+## Install
+
+### Global (recommended)
+
+```bash
+npm i -g @bryanberger/mattermost-mcp
+mattermost-mcp login        # interactive: server URL + auth, saved to the config dir
+mattermost-mcp status       # verify: prints the authenticated identity
+```
+
+`login` validates the credentials against the server and writes them (0600) under
+`$XDG_CONFIG_HOME/mattermost-mcp` (or `~/.config/mattermost-mcp`). The MCP server then picks them up
+automatically — no env vars required. See [CLI](#cli) and [Authenticate with `login`](#authenticate-with-login).
+
+### From source
 
 ```bash
 npm install
@@ -38,11 +52,48 @@ npm run build
 # Binary is now at dist/index.js (also available as mattermost-mcp via the bin field)
 ```
 
+## CLI
+
+The `mattermost-mcp` binary is both the MCP server and a small management CLI:
+
+| Command                 | Description                                                             |
+| ----------------------- | ----------------------------------------------------------------------- |
+| `mattermost-mcp`        | Start the MCP server on stdio (default — this is what MCP clients run). |
+| `mattermost-mcp login`  | Interactive auth wizard; validates and saves credentials.               |
+| `mattermost-mcp status` | Authenticate with the resolved config and print the current identity.   |
+| `mattermost-mcp logout` | Remove saved credentials (and the matching OAuth token cache).          |
+| `mattermost-mcp --help` | Usage. `--version` prints the version.                                  |
+
+## Authenticate with `login`
+
+```text
+$ mattermost-mcp login
+Mattermost server URL (e.g. https://mm.example.com): https://mattermost.example.com
+Authentication mode:
+  1) pat       paste a Personal Access Token
+  2) password  username/email + password (+ MFA)
+  3) oauth2    OAuth2 app + browser consent
+Choice [1]: 1
+Personal Access Token: ********
+✓ Logged in as @alice on https://mattermost.example.com
+  Saved to ~/.config/mattermost-mcp/credentials.json (mode: pat, 0600)
+```
+
+- **pat** — saves the token as-is.
+- **password** — exchanges your password for a **session token** and saves _that_ (the password is
+  never written to disk); re-run `login` when the session expires.
+- **oauth2** — runs the browser consent flow and caches the OAuth tokens (refreshed transparently).
+
 ## Configuration
 
-The server reads all settings from environment variables prefixed `MM_`. In development you can
-place them in a `.env` file in the project root and export them before running; in production pass
-them directly to the process. A fully annotated `.env.example` ships in the repository.
+Credentials come from two sources, in order of precedence:
+
+1. **Environment variables** (`MM_*`) — always win; ideal for CI and the `examples/` MCP client configs.
+2. **Saved `login` credentials** — the baseline when the matching env vars are absent.
+
+In development you can place env vars in a `.env` file in the project root and export them before
+running; in production pass them directly to the process. A fully annotated `.env.example` ships in
+the repository. Every setting below is also configurable via env.
 
 ### Environment Variables
 
@@ -209,8 +260,23 @@ Legend: ⚠️ = write (blocked by `MM_READ_ONLY=true`) · 💥 = destructive (r
 
 ## Register in an MCP Client
 
-The server speaks MCP over **stdio**. Point your MCP client at the built binary with the required
-environment variables. Two ready-to-edit config examples are in the `examples/` directory.
+The server speaks MCP over **stdio**. Point your MCP client at the binary. Two ready-to-edit config
+examples are in the `examples/` directory.
+
+### After a global install + `login`
+
+If you installed globally and ran `mattermost-mcp login`, the credentials are already on disk — the
+client config needs no `env` block at all:
+
+```json
+{
+  "mcpServers": {
+    "mattermost": {
+      "command": "mattermost-mcp"
+    }
+  }
+}
+```
 
 ### Generic (`examples/mcp.json`)
 
@@ -292,24 +358,6 @@ MM_INTEGRATION=1 \
 | `npm test`       | Run the vitest suite (integration tests skipped without `MM_INTEGRATION=1`) |
 | `npm run lint`   | ESLint + Prettier check                                                     |
 | `npm run format` | Prettier write (auto-fix formatting)                                        |
-
-### Architecture
-
-```
-src/
-  index.ts          — Server bootstrap; wires stdio transport and registers tools.
-  config.ts         — Environment variable parsing and validation (Zod).
-  log.ts            — Thin stderr logger (stdout is reserved for the MCP channel).
-  mattermost/       — Client4 wrapper, auth strategies (pat / password / oauth2),
-                      resilience (timeout, retry with back-off).
-  guardrails.ts     — Read-only / destructive-gate / allowlist enforcement.
-  tools/
-    messaging.ts    — 13 messaging tools.
-    channels.ts     — 12 channels & teams tools.
-    users.ts        — 6 users & presence tools.
-    files.ts        — 3 file tools.
-    registry.ts     — Aggregates all tools and registers them with the MCP server.
-```
 
 ## License
 
