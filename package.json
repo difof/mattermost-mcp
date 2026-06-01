@@ -1,5 +1,5 @@
 {
-  "name": "mattermost-mcp",
+  "name": "@bryanberger/mattermost-mcp",
   "version": "0.2.0",
   "description": "MCP server exposing the Mattermost REST API v4 as tools (self-hosted instances).",
   "type": "module",

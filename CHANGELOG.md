@@ -1,4 +1,4 @@
-# mattermost-mcp
+# @bryanberger/mattermost-mcp
 
 ## 0.2.0
 
