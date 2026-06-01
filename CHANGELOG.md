@@ -1,5 +1,16 @@
 # @bryanberger/mattermost-mcp
 
+## 0.4.0
+
+### Minor Changes
+
+- [#6](https://github.com/BryanBerger98/mattermost-mcp/pull/6) [`0f7464b`](https://github.com/BryanBerger98/mattermost-mcp/commit/0f7464b3f373203a6de0552ba33252fa248f741b) Thanks [@BryanBerger98](https://github.com/BryanBerger98)! - Add `mattermost-mcp login --gitlab` (alias `--sso`): a browser-driven SSO login for servers whose
+  only login path is an external IdP (e.g. GitLab) when you are **not** an admin — so Personal Access
+  Tokens and OAuth2 apps (both admin-gated) are unavailable. It opens the system Chrome/Chromium at
+  `{server}/login`, waits for you to complete the SSO login, reads the resulting `MMAUTHTOKEN` session
+  cookie via CDP, and saves it (0600) as a token. Chrome discovery honors `MM_CHROME_PATH`. Adds an
+  optional, lazy-imported `puppeteer-core` dependency that never loads on the MCP server path.
+
 ## 0.3.0
 
 ### Minor Changes
