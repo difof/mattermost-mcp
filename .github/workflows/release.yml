@@ -12,7 +12,7 @@ concurrency:
 permissions:
   contents: write # create the version commit, tag, and GitHub Release
   pull-requests: write # open/update the "Version Packages" PR
-  id-token: write # npm provenance (signed publish attestation)
+  id-token: write # OIDC trusted publishing + automatic provenance attestation
 
 jobs:
   release:
@@ -22,9 +22,12 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22 # OIDC trusted publishing requires Node >= 22.14
           cache: npm
           registry-url: https://registry.npmjs.org
+
+      # Trusted publishing (OIDC) needs npm >= 11.5.1; runners ship npm 10.
+      - run: npm install -g npm@latest
 
       - run: npm ci
 
@@ -42,8 +45,7 @@ jobs:
           commit: "chore: version packages"
           title: "chore: version packages"
         env:
+          # No NPM_TOKEN on purpose: with id-token:write + npm >= 11.5.1, the action
+          # publishes via npm OIDC trusted publishing (configured on npmjs.com for
+          # this repo + release.yml). Provenance is attached automatically.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Must be named NPM_TOKEN: changesets/action keys on this exact var to
-          # use token auth. Without it (and with id-token:write granted) the action
-          # falls back to npm OIDC trusted publishing, which isn't configured → E403.
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
