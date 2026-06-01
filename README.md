@@ -56,13 +56,14 @@ npm run build
 
 The `mattermost-mcp` binary is both the MCP server and a small management CLI:
 
-| Command                 | Description                                                             |
-| ----------------------- | ----------------------------------------------------------------------- |
-| `mattermost-mcp`        | Start the MCP server on stdio (default — this is what MCP clients run). |
-| `mattermost-mcp login`  | Interactive auth wizard; validates and saves credentials.               |
-| `mattermost-mcp status` | Authenticate with the resolved config and print the current identity.   |
-| `mattermost-mcp logout` | Remove saved credentials (and the matching OAuth token cache).          |
-| `mattermost-mcp --help` | Usage. `--version` prints the version.                                  |
+| Command                         | Description                                                             |
+| ------------------------------- | ----------------------------------------------------------------------- |
+| `mattermost-mcp`                | Start the MCP server on stdio (default — this is what MCP clients run). |
+| `mattermost-mcp login`          | Interactive auth wizard; validates and saves credentials.               |
+| `mattermost-mcp login --gitlab` | Browser SSO login (GitLab/SAML) — no admin or PAT required.             |
+| `mattermost-mcp status`         | Authenticate with the resolved config and print the current identity.   |
+| `mattermost-mcp logout`         | Remove saved credentials (and the matching OAuth token cache).          |
+| `mattermost-mcp --help`         | Usage. `--version` prints the version.                                  |
 
 ## Authenticate with `login`
 
@@ -83,6 +84,30 @@ Personal Access Token: ********
 - **password** — exchanges your password for a **session token** and saves _that_ (the password is
   never written to disk); re-run `login` when the session expires.
 - **oauth2** — runs the browser consent flow and caches the OAuth tokens (refreshed transparently).
+
+### Browser SSO login (GitLab / SAML)
+
+If your server's only login is an external IdP (e.g. GitLab) **and you are not an admin**, both PATs
+and OAuth2 apps may be unavailable — they require server settings only an admin can enable. Use the
+browser SSO login instead:
+
+```text
+$ mattermost-mcp login --gitlab
+Mattermost server URL: https://mattermost.example.com
+Opening a browser window. Complete the GitLab (or other SSO) login there.
+✓ Logged in as @alice on https://mattermost.example.com
+  Saved to ~/.config/mattermost-mcp/credentials.json (mode: pat — browser SSO session token, 0600)
+```
+
+It opens your **system Chrome/Chromium** at `{server}/login`, waits while you complete the SSO login
+in that window, then reads the resulting `MMAUTHTOKEN` session cookie and saves it as a token. The
+flag is provider-agnostic (`--sso` is an alias).
+
+- Requires Google Chrome / Chromium / Edge / Brave installed. Override detection with
+  `MM_CHROME_PATH=/path/to/chrome` if it isn't found automatically.
+- The captured token is a **session token** — it expires with the server's SSO session length. Re-run
+  `mattermost-mcp login --gitlab` when calls start returning `401`.
+- Cleanest long-term fix: ask an admin to enable Personal Access Tokens, then use `login` (pat).
 
 ## Configuration
 

@@ -3,6 +3,7 @@
 import type { Client4 } from "@mattermost/client";
 import { buildClient } from "../mattermost/client.js";
 import { acquireOAuthToken } from "../mattermost/oauth.js";
+import { captureSessionToken } from "../mattermost/browser.js";
 import { DEFAULT_RESILIENCE } from "../mattermost/resilience.js";
 import { formatMattermostError } from "../mattermost/errors.js";
 import { writeCredentials, type StoredCredentials } from "../credentials.js";
@@ -60,8 +61,16 @@ async function verify(client: Client4, url: string): Promise<{ username: string 
   }
 }
 
-export async function runLogin(): Promise<void> {
+export async function runLogin(args: string[] = []): Promise<void> {
+  const browserSso = args.includes("--gitlab") || args.includes("--sso");
   const url = await promptUrl();
+
+  // Browser SSO capture: no auth mode prompt — we drive a browser, the user logs
+  // in through their IdP, and we read the resulting session token. See browser.ts.
+  if (browserSso) {
+    return runBrowserSsoLogin(url);
+  }
+
   const mode = await promptMode();
   const client = buildClient(url, DEFAULT_RESILIENCE.timeoutMs);
 
@@ -105,5 +114,30 @@ export async function runLogin(): Promise<void> {
     `✓ Logged in as @${username} on ${url}\n` +
       `  Saved to ${credentialsFile()} (mode: ${stored.auth.mode}, 0600)\n` +
       `  The MCP server will use these automatically. MM_* env vars override them.\n`,
+  );
+}
+
+/**
+ * `mattermost-mcp login --gitlab` (alias `--sso`): drive a browser, let the user
+ * complete their IdP login (GitLab, SAML, …), and persist the captured session
+ * token as a pat. The realistic path when the user is not an admin, so neither
+ * Personal Access Tokens nor an OAuth2 app can be enabled.
+ */
+async function runBrowserSsoLogin(url: string): Promise<void> {
+  process.stderr.write(
+    "Opening a browser window. Complete the GitLab (or other SSO) login there.\n",
+  );
+  const token = await captureSessionToken(url);
+
+  const client = buildClient(url, DEFAULT_RESILIENCE.timeoutMs);
+  client.setToken(token);
+  const { username } = await verify(client, url);
+
+  writeCredentials({ url, auth: { mode: "pat", token } });
+  process.stdout.write(
+    `✓ Logged in as @${username} on ${url}\n` +
+      `  Saved to ${credentialsFile()} (mode: pat — browser SSO session token, 0600)\n` +
+      `  Note: this is an SSO session token; it expires with the server session length.\n` +
+      `  Re-run \`mattermost-mcp login --gitlab\` when calls start returning 401.\n`,
   );
 }

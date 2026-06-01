@@ -15,12 +15,13 @@ const HELP = `mattermost-mcp ${version}
 MCP (stdio) server for the Mattermost REST API v4.
 
 Usage:
-  mattermost-mcp              Start the MCP server on stdio (default; used by MCP clients)
-  mattermost-mcp login        Authenticate and save credentials to the config dir
-  mattermost-mcp status       Show the current identity and server
-  mattermost-mcp logout       Remove saved credentials
-  mattermost-mcp --help       Show this help
-  mattermost-mcp --version    Print the version
+  mattermost-mcp               Start the MCP server on stdio (default; used by MCP clients)
+  mattermost-mcp login         Authenticate and save credentials to the config dir
+  mattermost-mcp login --gitlab  Log in through a browser SSO window (GitLab/SAML; no admin needed)
+  mattermost-mcp status        Show the current identity and server
+  mattermost-mcp logout        Remove saved credentials
+  mattermost-mcp --help        Show this help
+  mattermost-mcp --version     Print the version
 
 Credentials saved by \`login\` are used by the server automatically.
 MM_* environment variables override saved credentials. See the README for all options.
@@ -34,7 +35,7 @@ async function main(): Promise<void> {
       await runServer();
       return;
     case "login":
-      await runLogin();
+      await runLogin(process.argv.slice(3));
       return;
     case "status":
     case "whoami":
