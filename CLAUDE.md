@@ -37,7 +37,7 @@ webhooks/slash-command provisioning, compliance/data-retention, Boards/Playbooks
 - IMPORTANT: never invent API paths. Use only `@mattermost/client` Client4 methods (verify in `node_modules`) or REST v4 endpoints documented at https://api.mattermost.com.
 - `edit_post` uses `PUT /posts/{id}/patch` (not full replace). `send_dm` body is a JSON array of user ids (2 direct / 3–8 group).
 - Auth modes: `pat | password | oauth2`. Password session token comes from the `Token` response header.
-- `login --gitlab` (alias `--sso`): for non-admin users on IdP-only servers (GitLab/SAML) where PATs and OAuth2 apps are admin-gated. Drives the system browser, reads the `MMAUTHTOKEN` session cookie via CDP, and saves it as a `pat`. The token is a session token (expires); not a real PAT.
+- `login --gitlab` (alias `--sso`, also a `gitlab / SSO` choice in the interactive menu): for non-admin users on IdP-only servers (GitLab/SAML) where PATs and OAuth2 apps are admin-gated. Drives the user's default Chromium browser (else first installed), reads the `MMAUTHTOKEN` session cookie via CDP, and saves it as a `pat`. The token is a session token (expires); not a real PAT.
 
 ## Layout
 
@@ -47,8 +47,8 @@ webhooks/slash-command provisioning, compliance/data-retention, Boards/Playbooks
 - `src/config.ts` — env parsing + validation (zod)
 - `src/credentials.ts` — saved-login store (0600) + `resolveConfig` (env overrides saved creds)
 - `src/paths.ts` — config-dir / credentials-file locations (XDG-aware)
-- `src/prompt.ts` — dependency-free interactive stdin helpers (masked secret)
-- `src/mattermost/` — `Client4` wrapper + auth strategies (incl. `browser.ts` — Chrome discovery + `MMAUTHTOKEN` capture for `login --gitlab`)
+- `src/prompt.ts` — dependency-free interactive stdin helpers: masked secret + `select()` arrow-key menu (raw-mode TTY, non-TTY numbered fallback)
+- `src/mattermost/` — `Client4` wrapper + auth strategies (incl. `browser.ts` — Chrome discovery + `MMAUTHTOKEN` capture for `login --gitlab`; `default-browser.ts` — OS default-browser detection, Chromium-only)
 - `src/guardrails.ts` — read-only / destructive / allowlist checks
 - `src/tools/` — tool defs per domain (messaging, channels, users, files) + `registry.ts`
 

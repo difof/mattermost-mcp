@@ -8,9 +8,9 @@ import { DEFAULT_RESILIENCE } from "../mattermost/resilience.js";
 import { formatMattermostError } from "../mattermost/errors.js";
 import { writeCredentials, type StoredCredentials } from "../credentials.js";
 import { credentialsFile } from "../paths.js";
-import { prompt, promptSecret } from "../prompt.js";
+import { prompt, promptSecret, select } from "../prompt.js";
 
-type Mode = "pat" | "password" | "oauth2";
+type Mode = "pat" | "password" | "oauth2" | "gitlab";
 
 const DEFAULT_REDIRECT = "http://127.0.0.1:7000/callback";
 
@@ -35,20 +35,13 @@ async function promptUrl(): Promise<string> {
   }
 }
 
-async function promptMode(): Promise<Mode> {
-  process.stderr.write(
-    "Authentication mode:\n" +
-      "  1) pat       paste a Personal Access Token\n" +
-      "  2) password  username/email + password (+ MFA)\n" +
-      "  3) oauth2    OAuth2 app + browser consent\n",
-  );
-  for (;;) {
-    const choice = (await prompt("Choice [1]: ")) || "1";
-    if (choice === "1" || choice.toLowerCase() === "pat") return "pat";
-    if (choice === "2" || choice.toLowerCase() === "password") return "password";
-    if (choice === "3" || choice.toLowerCase() === "oauth2") return "oauth2";
-    process.stderr.write("  Enter 1, 2, or 3.\n");
-  }
+function promptMode(): Promise<Mode> {
+  return select<Mode>("Authentication mode (↑/↓ to move, Enter to select):", [
+    { value: "pat", label: "pat", hint: "paste a Personal Access Token" },
+    { value: "password", label: "password", hint: "username/email + password (+ MFA)" },
+    { value: "oauth2", label: "oauth2", hint: "OAuth2 app + browser consent" },
+    { value: "gitlab", label: "gitlab / SSO", hint: "browser login via GitLab/SAML — no admin" },
+  ]);
 }
 
 /** Confirm a Bearer-authenticated client works, returning the identity. */
@@ -62,16 +55,16 @@ async function verify(client: Client4, url: string): Promise<{ username: string 
 }
 
 export async function runLogin(args: string[] = []): Promise<void> {
-  const browserSso = args.includes("--gitlab") || args.includes("--sso");
+  const forceGitlab = args.includes("--gitlab") || args.includes("--sso");
   const url = await promptUrl();
+  const mode = forceGitlab ? "gitlab" : await promptMode();
 
-  // Browser SSO capture: no auth mode prompt — we drive a browser, the user logs
-  // in through their IdP, and we read the resulting session token. See browser.ts.
-  if (browserSso) {
+  // Browser SSO capture: drive a browser, the user logs in through their IdP, and
+  // we read the resulting session token. No mode-specific prompts. See browser.ts.
+  if (mode === "gitlab") {
     return runBrowserSsoLogin(url);
   }
 
-  const mode = await promptMode();
   const client = buildClient(url, DEFAULT_RESILIENCE.timeoutMs);
 
   let stored: StoredCredentials;

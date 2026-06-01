@@ -13,6 +13,7 @@
 // never touches a browser — pays no startup cost for it.
 import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { defaultChromiumExecutable } from "./default-browser.js";
 import { log } from "../log.js";
 
 /** Mattermost's session cookie. Its value is a valid Bearer token for the v4 API. */
@@ -79,6 +80,7 @@ export function resolveChromePath(
   platform: string = process.platform,
   fileExists: (p: string) => boolean = existsSync,
   which: (bin: string) => string | null = defaultWhich,
+  detectDefault: (platform: string) => string | null = (p) => defaultChromiumExecutable(p),
 ): string {
   const override = firstNonEmpty(
     env.MM_CHROME_PATH,
@@ -89,6 +91,10 @@ export function resolveChromePath(
     if (fileExists(override)) return override;
     throw new Error(`Chrome path from the environment does not exist: ${override}`);
   }
+
+  // Prefer the user's default browser when it is Chromium-based.
+  const preferred = detectDefault(platform);
+  if (preferred && fileExists(preferred)) return preferred;
 
   const candidates =
     platform === "darwin" ? MAC_CANDIDATES : platform === "win32" ? winCandidates(env) : [];
@@ -143,6 +149,7 @@ export async function captureSessionToken(
   const executablePath = resolveChromePath();
   const { default: puppeteer } = await import("puppeteer-core");
 
+  log(`launching browser: ${executablePath}`);
   const browser = await puppeteer.launch({
     headless: false,
     executablePath,

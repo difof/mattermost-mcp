@@ -70,20 +70,24 @@ The `mattermost-mcp` binary is both the MCP server and a small management CLI:
 ```text
 $ mattermost-mcp login
 Mattermost server URL (e.g. https://mm.example.com): https://mattermost.example.com
-Authentication mode:
-  1) pat       paste a Personal Access Token
-  2) password  username/email + password (+ MFA)
-  3) oauth2    OAuth2 app + browser consent
-Choice [1]: 1
+Authentication mode (↑/↓ to move, Enter to select):
+› pat           paste a Personal Access Token
+  password      username/email + password (+ MFA)
+  oauth2        OAuth2 app + browser consent
+  gitlab / SSO  browser login via GitLab/SAML — no admin
 Personal Access Token: ********
 ✓ Logged in as @alice on https://mattermost.example.com
   Saved to ~/.config/mattermost-mcp/credentials.json (mode: pat, 0600)
 ```
 
+The mode picker is keyboard-navigable (arrow keys / `j`·`k`, digits to jump, Enter to confirm). When
+input is not a TTY it falls back to a numbered prompt.
+
 - **pat** — saves the token as-is.
 - **password** — exchanges your password for a **session token** and saves _that_ (the password is
   never written to disk); re-run `login` when the session expires.
 - **oauth2** — runs the browser consent flow and caches the OAuth tokens (refreshed transparently).
+- **gitlab / SSO** — see below; also selectable directly with `mattermost-mcp login --gitlab`.
 
 ### Browser SSO login (GitLab / SAML)
 
@@ -99,12 +103,14 @@ Opening a browser window. Complete the GitLab (or other SSO) login there.
   Saved to ~/.config/mattermost-mcp/credentials.json (mode: pat — browser SSO session token, 0600)
 ```
 
-It opens your **system Chrome/Chromium** at `{server}/login`, waits while you complete the SSO login
-in that window, then reads the resulting `MMAUTHTOKEN` session cookie and saves it as a token. The
-flag is provider-agnostic (`--sso` is an alias).
+It opens a browser at `{server}/login`, waits while you complete the SSO login in that window, then
+reads the resulting `MMAUTHTOKEN` session cookie and saves it as a token. The flag is
+provider-agnostic (`--sso` is an alias), and `gitlab / SSO` is also offered in the `login` menu.
 
-- Requires Google Chrome / Chromium / Edge / Brave installed. Override detection with
-  `MM_CHROME_PATH=/path/to/chrome` if it isn't found automatically.
+- Uses your **default browser** when it is Chromium-based (Chrome, Chromium, Brave, Edge, Opera,
+  Vivaldi, Arc, Dia…); otherwise the first installed Chromium engine it finds. Override with
+  `MM_CHROME_PATH=/path/to/browser` (puppeteer-core can only drive Chromium engines — not Safari or
+  Firefox).
 - The captured token is a **session token** — it expires with the server's SSO session length. Re-run
   `mattermost-mcp login --gitlab` when calls start returning `401`.
 - Cleanest long-term fix: ask an admin to enable Personal Access Tokens, then use `login` (pat).
