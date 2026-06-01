@@ -1,5 +1,11 @@
 # @bryanberger/mattermost-mcp
 
+## 0.3.0
+
+### Minor Changes
+
+- [#4](https://github.com/BryanBerger98/mattermost-mcp/pull/4) [`da9d01f`](https://github.com/BryanBerger98/mattermost-mcp/commit/da9d01fdfc9dcdacb21a29f8fa67a42ed5c9c91d) Thanks [@BryanBerger98](https://github.com/BryanBerger98)! - Add a management CLI to the `mattermost-mcp` binary. After `npm i -g @bryanberger/mattermost-mcp`, run `mattermost-mcp login` for an interactive auth wizard (PAT, password, or OAuth2) that validates and saves credentials (0600) under the config dir; the MCP server then uses them automatically — no env vars required. Also adds `status` (print the authenticated identity) and `logout` (clear saved credentials). `MM_*` environment variables still take precedence over saved credentials. Password logins are exchanged for a session token at login time, so no password is ever written to disk.
+
 ## 0.2.1
 
 ### Patch Changes
