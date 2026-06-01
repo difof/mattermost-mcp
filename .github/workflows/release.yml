@@ -1,0 +1,46 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+# Serialize releases so two pushes can't open competing Version PRs.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write # create the version commit, tag, and GitHub Release
+  pull-requests: write # open/update the "Version Packages" PR
+  id-token: write # npm provenance (signed publish attestation)
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+
+      # Gate the release on a green build before anything is published.
+      - run: npm run lint
+      - run: npm test
+
+      # Opens/updates the "Version Packages" PR when changesets exist;
+      # when that PR is merged, runs `publish` to build + push to npm.
+      - name: Create Release PR or publish to npm
+        uses: changesets/action@v1
+        with:
+          version: npm run version
+          publish: npm run release
+          commit: "chore: version packages"
+          title: "chore: version packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

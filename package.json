@@ -4,12 +4,34 @@
   "description": "MCP server exposing the Mattermost REST API v4 as tools (self-hosted instances).",
   "type": "module",
   "license": "MIT",
+  "author": "Bryan Berger <contact@bryanberger.dev>",
+  "homepage": "https://github.com/BryanBerger98/mattermost-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BryanBerger98/mattermost-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/BryanBerger98/mattermost-mcp/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "mattermost",
+    "chatops",
+    "stdio",
+    "ai-tools",
+    "claude"
+  ],
   "bin": {
     "mattermost-mcp": "dist/index.js"
   },
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "engines": {
     "node": ">=20"
   },
@@ -21,7 +43,10 @@
     "format": "prettier --write .",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
-    "test:integration": "MM_INTEGRATION=1 vitest run src/integration"
+    "test:integration": "MM_INTEGRATION=1 vitest run src/integration",
+    "changeset": "changeset",
+    "version": "changeset version",
+    "release": "npm run build && changeset publish"
   },
   "dependencies": {
     "@mattermost/client": "^11.6",
@@ -30,6 +55,8 @@
     "zod-to-json-schema": "^3.25.2"
   },
   "devDependencies": {
+    "@changesets/changelog-github": "^0.7.0",
+    "@changesets/cli": "^2.31.0",
     "@eslint/js": "^9.9",
     "@types/node": "^20.14",
     "eslint": "^9.9",
