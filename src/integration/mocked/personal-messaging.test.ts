@@ -10,9 +10,11 @@ const THREAD_FLAGS = {
 describe("personal messaging through MCP and the Mattermost HTTP API", () => {
   const fixture = useMattermost({ guardrails: { allowDestructive: true } });
 
-  it("advertises all 34 tools with schemas and accurate write/destructive hints", async () => {
+  it("advertises all 37 tools with schemas and accurate write/destructive hints", async () => {
     const { tools } = await fixture().listTools();
     const readTools = [
+      "api_search",
+      "api_describe",
       "get_me",
       "get_user",
       "search_users",
@@ -30,6 +32,7 @@ describe("personal messaging through MCP and the Mattermost HTTP API", () => {
       "get_file_metadata",
     ];
     const writeTools = [
+      "api_call",
       "set_status",
       "set_custom_status",
       "post_message",
@@ -57,7 +60,7 @@ describe("personal messaging through MCP and the Mattermost HTTP API", () => {
       expect(tool.description).toBeTruthy();
       expect(tool.annotations?.readOnlyHint, tool.name).toBe(readTools.includes(tool.name));
       expect(tool.annotations?.destructiveHint, tool.name).toBe(
-        ["delete_post", "archive_channel", "remove_member"].includes(tool.name),
+        ["api_call", "delete_post", "archive_channel", "remove_member"].includes(tool.name),
       );
     }
     const dm = tools.find(({ name }) => name === "send_dm")!;
