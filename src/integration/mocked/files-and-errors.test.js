@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ME, PEER, OK, useMattermost } from "./mattermost-http-fixture.js";
-
 describe("file transfers and failures through MCP and HTTP", () => {
   const fixture = useMattermost();
-
   it("uploads binary multipart content, attaches it to a post, and retrieves it unchanged", async () => {
     const mm = fixture();
     const bytes = Buffer.from([0, 255, 13, 10, 65, 128]);
@@ -18,7 +16,7 @@ describe("file transfers and failures through MCP and HTTP", () => {
       inspectBody: async (body, headers) => {
         expect(headers["content-type"]).toMatch(/^multipart\/form-data; boundary=/);
         const form = await new Response(body, {
-          headers: { "Content-Type": headers["content-type"]! },
+          headers: { "Content-Type": headers["content-type"] },
         }).formData();
         expect([...form.keys()].sort()).toEqual(["channel_id", "files"]);
         expect(form.get("channel_id")).toBe("project-channel");
@@ -30,14 +28,11 @@ describe("file transfers and failures through MCP and HTTP", () => {
       },
       reply: { file_infos: [metadata], client_ids: [] },
     });
-    const uploaded = await mm.call<{ id: string; name: string; size: number; mime_type: string }[]>(
-      "upload_file",
-      {
-        channel_id: "project-channel",
-        filename: "sample.bin",
-        content_base64: bytes.toString("base64"),
-      },
-    );
+    const uploaded = await mm.call("upload_file", {
+      channel_id: "project-channel",
+      filename: "sample.bin",
+      content_base64: bytes.toString("base64"),
+    });
     expect(uploaded).toEqual([
       { id: metadata.id, name: metadata.name, size: bytes.length, mime_type: metadata.mime_type },
     ]);
@@ -60,7 +55,6 @@ describe("file transfers and failures through MCP and HTTP", () => {
       content_base64: bytes.toString("base64"),
     });
   });
-
   it("returns an empty file with the default limit", async () => {
     const mm = fixture();
     mm.expect("GET", "/files/empty-file", { bytes: Buffer.alloc(0) });
@@ -70,7 +64,6 @@ describe("file transfers and failures through MCP and HTTP", () => {
       content_base64: "",
     });
   });
-
   it.each([false, true])(
     "rejects an oversized download without retry (chunked=%s)",
     async (chunked) => {
@@ -81,7 +74,6 @@ describe("file transfers and failures through MCP and HTTP", () => {
       );
     },
   );
-
   it("retries transient read failures at the HTTP boundary, including read-only POST search", async () => {
     const mm = fixture();
     mm.expect("GET", "/channels/project-channel", {
@@ -106,7 +98,6 @@ describe("file transfers and failures through MCP and HTTP", () => {
     mm.expect("GET", "/files/retry-file/info", { reply: metadata });
     expect(await mm.call("get_file_metadata", { file_id: metadata.id })).toEqual(metadata);
   });
-
   it("does not replay either step of send_dm after an ambiguous post failure", async () => {
     const mm = fixture();
     mm.expect("POST", "/channels/direct", {
@@ -125,7 +116,6 @@ describe("file transfers and failures through MCP and HTTP", () => {
     mm.expect("GET", "/users/me", { reply: ME });
     expect(await mm.call("get_me")).toEqual(ME);
   });
-
   it.each([
     {
       name: "revoked PAT",
@@ -173,7 +163,6 @@ describe("file transfers and failures through MCP and HTTP", () => {
       expect(error).toContain("api.permissions_or_missing");
     },
   );
-
   it("refuses read-only writes and destructive operations before any HTTP request", async () => {
     const mm = fixture();
     mm.guardrails.readOnly = true;
@@ -190,7 +179,6 @@ describe("file transfers and failures through MCP and HTTP", () => {
     mm.expect("GET", "/users/me", { reply: ME });
     expect(await mm.call("get_me")).toEqual(ME);
   });
-
   it("rejects invalid selectors and participants before contacting Mattermost", async () => {
     const mm = fixture();
     expect(
@@ -210,11 +198,10 @@ describe("file transfers and failures through MCP and HTTP", () => {
       "invalid arguments",
     );
   });
-
   it("rejects invalid custom-status expiration before contacting Mattermost", async () => {
     const mm = fixture();
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-    const invalid: { duration: string; expires_at?: string }[] = [
+    const invalid = [
       { duration: "today" },
       { duration: "one_hour", expires_at: "not-a-date" },
       { duration: "custom_date_time", expires_at: expiresAt },
@@ -235,7 +222,6 @@ describe("file transfers and failures through MCP and HTTP", () => {
       );
     }
   });
-
   it("resolves file and thread provenance before allowing access to another channel", async () => {
     const mm = fixture();
     mm.guardrails.channelAllowlist = ["allowed-channel"];
@@ -262,7 +248,6 @@ describe("file transfers and failures through MCP and HTTP", () => {
       "opening or creating channels",
     );
   });
-
   it("filters restricted search results after parsing the real HTTP response", async () => {
     const mm = fixture();
     mm.guardrails.channelAllowlist = ["allowed-channel"];
