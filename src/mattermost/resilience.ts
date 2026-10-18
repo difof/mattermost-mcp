@@ -81,27 +81,37 @@ export async function withRetry<T>(
 }
 
 type RequestOptions = Parameters<Client4["getOptions"]>[0];
+
+/** Trusted operation metadata, separate from caller-supplied HTTP options. */
+export interface RequestPolicy {
+  retrySafe: boolean;
+}
+
 type RequestRunner = <T>(
   url: string,
   options: RequestOptions,
   operation: () => Promise<T>,
+  policy?: RequestPolicy,
 ) => Promise<T>;
 
 const requestRunners = new WeakMap<Client4, RequestRunner>();
 
 /**
- * Share the session's per-request retry/auth policy with the binary file helper,
+ * Share the session's per-request retry/auth policy with bounded raw transports,
  * which cannot use Client4's JSON/text-consuming transport. `operation` must
  * rebuild Client4.getOptions on every attempt for fresh credentials/timeouts.
+ * Catalogued operations supply trusted retry safety: some reads use POST, while
+ * Mattermost's access-policy activation mutates state using GET.
  */
 export function runClientRequest<T>(
   client: Client4,
   url: string,
   options: RequestOptions,
   operation: () => Promise<T>,
+  policy?: RequestPolicy,
 ): Promise<T> {
   const run = requestRunners.get(client);
-  return run ? run(url, options, operation) : operation();
+  return run ? run(url, options, operation, policy) : operation();
 }
 
 function isSafeRead(client: Client4, url: string, options: RequestOptions): boolean {
@@ -149,7 +159,12 @@ export function applyRequestResilience(
 
   requestRunners.set(
     client,
-    async <T>(url: string, options: RequestOptions, operation: () => Promise<T>) => {
+    async <T>(
+      url: string,
+      options: RequestOptions,
+      operation: () => Promise<T>,
+      policy?: RequestPolicy,
+    ) => {
       let recovered = false;
       let recoveryFailed = false;
       const attempt = async (): Promise<T> => {
@@ -180,7 +195,7 @@ export function applyRequestResilience(
         }
       };
 
-      if (!isSafeRead(client, url, options)) return attempt();
+      if (!(policy?.retrySafe ?? isSafeRead(client, url, options))) return attempt();
       return withRetry(
         attempt,
         cfg,
