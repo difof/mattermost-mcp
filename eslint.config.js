@@ -1,37 +1,25 @@
 import js from "@eslint/js";
-import tseslint from "typescript-eslint";
+import globals from "globals";
 import prettier from "eslint-config-prettier";
 
-export default tseslint.config(
+export default [
   { ignores: ["dist/**", "node_modules/**"] },
   js.configs.recommended,
-  ...tseslint.configs.recommended,
   {
-    files: ["src/**/*.js", "scripts/**/*.mjs"],
+    files: ["**/*.js", "**/*.mjs"],
     languageOptions: {
-      globals: {
-        fetch: "readonly",
-        FormData: "readonly",
-        Headers: "readonly",
-        URL: "readonly",
-        TextDecoder: "readonly",
-        AbortSignal: "readonly",
-        Buffer: "readonly",
-        process: "readonly",
-        setTimeout: "readonly",
-        clearTimeout: "readonly",
-      },
+      ecmaVersion: 2022,
+      sourceType: "module",
+      globals: globals.node,
     },
-  },
-  {
     rules: {
-      "@typescript-eslint/no-unused-vars": [
+      "no-unused-vars": [
         "error",
-        { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" },
       ],
       // stdout is the MCP channel — forbid console.log; use console.error (stderr).
       "no-console": ["error", { allow: ["error", "warn"] }],
     },
   },
   prettier,
-);
+];
