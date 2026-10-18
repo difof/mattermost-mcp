@@ -1,7 +1,7 @@
 # mattermost-mcp
 
 Use your Mattermost account from an MCP agent: read conversations, send DMs and replies,
-manage channels, and work with files. **34 tools**, stdio transport, Node.js 20+.
+manage channels, and work with files. **37 tools**, stdio transport, Node.js 20+.
 
 This is [difof's fork](https://github.com/difof/mattermost-mcp) of
 [BryanBerger98/mattermost-mcp](https://github.com/BryanBerger98/mattermost-mcp), with fixes for
@@ -48,12 +48,14 @@ The process uses the saved login. For environment-based credentials, see
 | Channels and teams |    12 | Listings, channel creation, membership, unread counts and read state      |
 | Users and presence |     6 | User lookup, search, identity and status                                  |
 | Files              |     3 | Upload, metadata and bounded downloads                                    |
+| Full REST API      |     3 | Search operations, inspect schemas on demand, and call the API            |
 
-A PAT uses your account's permissions. These tools cover a subset of the Mattermost API;
-see [the API coverage audit](docs/api-coverage.md) for the complete endpoint inventory and gaps.
+A PAT uses your account's permissions. `api_search` → `api_describe` → `api_call` exposes all
+**590 account-compatible core HTTP operations** in the pinned v11.11.1 inventory. Endpoint schemas
+are returned only when requested. See [the API guide](docs/tools.md#full-api-3) and [coverage boundaries](docs/api-coverage.md).
 
-Writes are enabled by default. Set `MM_READ_ONLY=true` to disable them. Deletes, archives and
-member removal additionally require `MM_ALLOW_DESTRUCTIVE=true` and `confirm: true` per call.
+Writes are enabled by default. Set `MM_READ_ONLY=true` to disable them. Destructive operations
+additionally require `MM_ALLOW_DESTRUCTIVE=true` and `confirm: true` per call.
 [Team/channel restrictions and retry behavior](docs/configuration.md#guardrails) are configurable.
 
 ## Development
@@ -73,7 +75,7 @@ HTTP stack; real server permissions and deployment behavior still need live vali
 - [Tool reference and personal-account workflows](docs/tools.md)
 - [Authentication, configuration and guardrails](docs/configuration.md)
 - [Testing, mock design and optional live checks](docs/testing.md)
-- [Mattermost API coverage and missing capabilities](docs/api-coverage.md)
+- [Mattermost API coverage and version boundaries](docs/api-coverage.md)
 
 ## License
 
