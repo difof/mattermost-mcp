@@ -1,24 +1,13 @@
-// @mattermost/client is CommonJS and exposes its members via Object.defineProperty
-// getters, which Node's ESM named-import detection cannot see. Import the default
-// (module.exports namespace) for runtime values; keep a type-only import for types.
-import type { Client4 } from "@mattermost/client";
+// @mattermost/client exposes CommonJS getters that Node cannot detect as named
+// exports. Import its default namespace for Client4 and ClientError.
 import mattermost from "@mattermost/client";
-import type { Config } from "../config.js";
-import type { MattermostSession } from "./types.js";
-import { acquireOAuthToken, refreshOAuthToken, type OAuthTokens } from "./oauth.js";
+import { acquireOAuthToken, refreshOAuthToken } from "./oauth.js";
 import { formatMattermostError } from "./errors.js";
-import {
-  applyRequestTimeout,
-  applyRequestResilience,
-  DEFAULT_RESILIENCE,
-  type ResilienceConfig,
-} from "./resilience.js";
+import { applyRequestTimeout, applyRequestResilience, DEFAULT_RESILIENCE } from "./resilience.js";
 import { log } from "../log.js";
-
 const USER_AGENT = "mattermost-mcp/0.1.0";
-
-/** Construct a headless {@link Client4} (Bearer-only, cookies off, per-request timeout). */
-export function buildClient(url: string, timeoutMs: number): Client4 {
+/** Construct a headless Client4 (Bearer-only, cookies off, per-request timeout). */
+export function buildClient(url, timeoutMs) {
   const client = new mattermost.Client4();
   client.setUrl(url);
   client.setUserAgent(USER_AGENT);
@@ -29,35 +18,23 @@ export function buildClient(url: string, timeoutMs: number): Client4 {
   applyRequestTimeout(client, timeoutMs);
   return client;
 }
-
 /** Use the SDK transport for verified API routes without a named Client4 method. */
-export function doClientFetch<T>(
-  client: Client4,
-  url: string,
-  options: Parameters<Client4["getOptions"]>[0],
-): Promise<T> {
-  // doFetch is protected in the SDK declarations, but available at runtime.
-  // Keep the adaptation at the client boundary, including request resilience.
-  const transport = client as unknown as {
-    doFetch: <R>(url: string, options: Parameters<Client4["getOptions"]>[0]) => Promise<R>;
-  };
-  return transport.doFetch<T>(url, options);
+export function doClientFetch(client, url, options) {
+  // Keep access to Client4's internal transport at the session boundary.
+  return client.doFetch(url, options);
 }
-
 /**
- * Authenticate against Mattermost and return a ready {@link MattermostSession}.
+ * Authenticate against Mattermost and return a ready session.
  * Verifies credentials with a `GET /users/me` smoke call (also our identity).
  * Throws (fails fast) on auth or connectivity errors.
  */
-export async function createSession(config: Config): Promise<MattermostSession> {
+export async function createSession(config) {
   const { auth, url } = config;
-  const resilience: ResilienceConfig = config.resilience ?? DEFAULT_RESILIENCE;
+  const resilience = config.resilience ?? DEFAULT_RESILIENCE;
   const client = buildClient(url, resilience.timeoutMs);
-
   // oauth2 keeps mutable token state so a 401 can transparently refresh.
-  let oauthTokens: OAuthTokens | null = null;
-
-  async function authenticate(): Promise<void> {
+  let oauthTokens = null;
+  async function authenticate() {
     switch (auth.mode) {
       case "pat":
         // PAT → Bearer header on every request. No network call here.
@@ -76,9 +53,8 @@ export async function createSession(config: Config): Promise<MattermostSession> 
       }
     }
   }
-
   // Recover from a 401 in-flight: re-login (password) or refresh (oauth2).
-  async function recover(): Promise<boolean> {
+  async function recover() {
     if (auth.mode === "password") {
       log("session token expired (401) — re-authenticating");
       await client.login(auth.loginId, auth.password, auth.mfaToken ?? "");
@@ -92,11 +68,10 @@ export async function createSession(config: Config): Promise<MattermostSession> 
     }
     return false;
   }
-
   // Concurrent requests can encounter the same expired token. Share one login
   // or refresh so rotating refresh tokens are not redeemed more than once.
-  let recovery: Promise<boolean> | undefined;
-  const recoverAuthentication = (): Promise<boolean> => {
+  let recovery;
+  const recoverAuthentication = () => {
     if (!recovery) {
       recovery = recover().finally(() => {
         recovery = undefined;
@@ -104,9 +79,8 @@ export async function createSession(config: Config): Promise<MattermostSession> 
     }
     return recovery;
   };
-
   // Fail fast with an actionable message instead of a raw API error dump.
-  let me: Awaited<ReturnType<Client4["getMe"]>>;
+  let me;
   try {
     await authenticate();
     me = await client.getMe();
@@ -118,13 +92,12 @@ export async function createSession(config: Config): Promise<MattermostSession> 
   }
   log(`authenticated as @${me.username} (${me.id}) via ${auth.mode}`);
   applyRequestResilience(client, resilience, recoverAuthentication);
-
   return {
     client,
     config,
     userId: me.id,
     // Never replay a callback: it may have already completed a successful write
     // before a later request fails. Retry/auth recovery live in the transport.
-    call: async <T>(fn: (c: Client4) => Promise<T>): Promise<T> => fn(client),
+    call: async (fn) => fn(client),
   };
 }
