@@ -5,6 +5,7 @@ import { createSession } from "./mattermost/client.js";
 import { registerTools } from "./tools/registry.js";
 import { allTools } from "./tools/index.js";
 import { log } from "./log.js";
+import { VERSION } from "./version.js";
 /**
  * Start the MCP server on stdio. Configuration comes from `resolveConfig`:
  * saved `login` credentials are the baseline, overridden by any `MM_*` env vars.
@@ -14,7 +15,7 @@ export async function runServer() {
   const config = resolveConfig();
   const session = await createSession(config);
   const server = new Server(
-    { name: "mattermost-mcp", version: "0.1.0" },
+    { name: "mattermost-mcp", version: VERSION },
     { capabilities: { tools: {} } },
   );
   // tools/list + tools/call dispatched from the registry, sharing the session.
