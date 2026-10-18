@@ -41,6 +41,19 @@ function rawFetchClient() {
 afterEach(() => vi.unstubAllGlobals());
 // --- tests -------------------------------------------------------------------
 describe("upload_file", () => {
+  it("rejects malformed base64 before sending an upload", async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    const { text, isError } = await call(
+      "upload_file",
+      { channel_id: "c1", filename: "sample.bin", content_base64: "%%%" },
+      {},
+      rawFetchClient(),
+    );
+    expect(isError).toBe(true);
+    expect(text).toContain("canonical base64");
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it("blocked under MM_READ_ONLY", async () => {
     const { text, isError } = await call(
       "upload_file",
