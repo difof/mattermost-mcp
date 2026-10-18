@@ -2,12 +2,33 @@
 // All prompt I/O goes to stderr so that, even when a command's result is piped,
 // the prompts stay off stdout. EOF (Ctrl-D / closed stdin) aborts cleanly.
 import { createInterface, emitKeypressEvents } from "node:readline";
+let pipedLines;
+
+async function readPipedLine(question) {
+  // One iterator retains lines that arrive together while successive prompts
+  // are awaiting answers. Closing a new readline per question discards them.
+  pipedLines ??= createInterface({
+    input: process.stdin,
+    terminal: false,
+    crlfDelay: Infinity,
+  })[Symbol.asyncIterator]();
+  process.stderr.write(question);
+  process.stdin.resume();
+  const { value, done } = await pipedLines.next();
+  // An input producer may keep its pipe open after the last answer. Pausing
+  // releases the active stdin read while retaining already buffered lines.
+  process.stdin.pause();
+  if (done) onAbort();
+  return value;
+}
+
 function onAbort() {
   process.stderr.write("\nAborted.\n");
   process.exit(130);
 }
 /** Ask a question and resolve with the trimmed answer. Aborts on EOF. */
 export function prompt(question) {
+  if (!process.stdin.isTTY) return readPipedLine(question).then((answer) => answer.trim());
   const rl = createInterface({ input: process.stdin, output: process.stderr });
   let answered = false;
   return new Promise((resolve) => {
@@ -26,6 +47,7 @@ export function prompt(question) {
  * The answer is returned verbatim — secrets are not trimmed. Aborts on EOF.
  */
 export function promptSecret(question) {
+  if (!process.stdin.isTTY) return readPipedLine(question);
   const rl = createInterface({ input: process.stdin, output: process.stderr, terminal: true });
   let answered = false;
   let muted = false;
