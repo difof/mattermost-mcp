@@ -1,21 +1,16 @@
-// `mattermost-mcp login` — interactive auth wizard. Validates the credentials
-// against the server (GET /users/me) before saving them 0600 to the config dir.
-import type { Client4 } from "@mattermost/client";
+// The interactive login wizard verifies credentials before saving them. Password
+// login stores the returned session token; the password is never written to disk.
 import { buildClient } from "../mattermost/client.js";
 import { acquireOAuthToken } from "../mattermost/oauth.js";
 import { captureSessionToken } from "../mattermost/browser.js";
 import { DEFAULT_RESILIENCE } from "../mattermost/resilience.js";
 import { formatMattermostError } from "../mattermost/errors.js";
-import { writeCredentials, type StoredCredentials } from "../credentials.js";
+import { writeCredentials } from "../credentials.js";
 import { credentialsFile } from "../paths.js";
 import { prompt, promptSecret, select } from "../prompt.js";
-
-type Mode = "pat" | "password" | "oauth2" | "gitlab";
-
 const DEFAULT_REDIRECT = "http://127.0.0.1:7000/callback";
-
 /** Trim trailing slashes and a stray `/api/v4`, then validate the URL. */
-function normalizeUrl(raw: string): string {
+function normalizeUrl(raw) {
   const trimmed = raw
     .trim()
     .replace(/\/+$/, "")
@@ -23,8 +18,7 @@ function normalizeUrl(raw: string): string {
   new URL(trimmed); // throws on a malformed URL; caught by the caller
   return trimmed;
 }
-
-async function promptUrl(): Promise<string> {
+async function promptUrl() {
   for (;;) {
     const raw = await prompt("Mattermost server URL (e.g. https://mm.example.com): ");
     try {
@@ -34,18 +28,16 @@ async function promptUrl(): Promise<string> {
     }
   }
 }
-
-function promptMode(): Promise<Mode> {
-  return select<Mode>("Authentication mode (↑/↓ to move, Enter to select):", [
+function promptMode() {
+  return select("Authentication mode (↑/↓ to move, Enter to select):", [
     { value: "pat", label: "pat", hint: "paste a Personal Access Token" },
     { value: "password", label: "password", hint: "username/email + password (+ MFA)" },
     { value: "oauth2", label: "oauth2", hint: "OAuth2 app + browser consent" },
     { value: "gitlab", label: "gitlab / SSO", hint: "browser login via GitLab/SAML — no admin" },
   ]);
 }
-
 /** Confirm a Bearer-authenticated client works, returning the identity. */
-async function verify(client: Client4, url: string): Promise<{ username: string }> {
+async function verify(client, url) {
   try {
     const me = await client.getMe();
     return { username: me.username };
@@ -53,23 +45,18 @@ async function verify(client: Client4, url: string): Promise<{ username: string 
     throw new Error(`Authentication failed against ${url}: ${formatMattermostError(err)}`);
   }
 }
-
-export async function runLogin(args: string[] = []): Promise<void> {
+export async function runLogin(args = []) {
   const forceGitlab = args.includes("--gitlab") || args.includes("--sso");
   const url = await promptUrl();
   const mode = forceGitlab ? "gitlab" : await promptMode();
-
   // Browser SSO capture: drive a browser, the user logs in through their IdP, and
-  // we read the resulting session token. No mode-specific prompts. See browser.ts.
+  // we read the resulting session token. No mode-specific prompts. See browser.js.
   if (mode === "gitlab") {
     return runBrowserSsoLogin(url);
   }
-
   const client = buildClient(url, DEFAULT_RESILIENCE.timeoutMs);
-
-  let stored: StoredCredentials;
-  let username: string;
-
+  let stored;
+  let username;
   if (mode === "pat") {
     const token = await promptSecret("Personal Access Token: ");
     client.setToken(token);
@@ -94,14 +81,13 @@ export async function runLogin(args: string[] = []): Promise<void> {
     const clientId = await prompt("OAuth2 Client ID: ");
     const clientSecret = await promptSecret("OAuth2 Client Secret: ");
     const redirect = (await prompt(`Redirect URI [${DEFAULT_REDIRECT}]: `)) || DEFAULT_REDIRECT;
-    const auth = { mode: "oauth2", clientId, clientSecret, redirect } as const;
+    const auth = { mode: "oauth2", clientId, clientSecret, redirect };
     // Runs the browser consent flow and caches the OAuth tokens under the config dir.
     const tokens = await acquireOAuthToken(url, auth);
     client.setToken(tokens.accessToken);
     ({ username } = await verify(client, url));
     stored = { url, auth };
   }
-
   writeCredentials(stored);
   process.stdout.write(
     `✓ Logged in as @${username} on ${url}\n` +
@@ -109,23 +95,20 @@ export async function runLogin(args: string[] = []): Promise<void> {
       `  The MCP server will use these automatically. MM_* env vars override them.\n`,
   );
 }
-
 /**
  * `mattermost-mcp login --gitlab` (alias `--sso`): drive a browser, let the user
  * complete their IdP login (GitLab, SAML, …), and persist the captured session
  * token as a pat. The realistic path when the user is not an admin, so neither
  * Personal Access Tokens nor an OAuth2 app can be enabled.
  */
-async function runBrowserSsoLogin(url: string): Promise<void> {
+async function runBrowserSsoLogin(url) {
   process.stderr.write(
     "Opening a browser window. Complete the GitLab (or other SSO) login there.\n",
   );
   const token = await captureSessionToken(url);
-
   const client = buildClient(url, DEFAULT_RESILIENCE.timeoutMs);
   client.setToken(token);
   const { username } = await verify(client, url);
-
   writeCredentials({ url, auth: { mode: "pat", token } });
   process.stdout.write(
     `✓ Logged in as @${username} on ${url}\n` +
