@@ -1,14 +1,7 @@
 #!/usr/bin/env node
-import { createRequire } from "node:module";
-import { runServer } from "./server.js";
-import { runLogin } from "./commands/login.js";
-import { runLogout } from "./commands/logout.js";
-import { runStatus } from "./commands/status.js";
+import { VERSION } from "./version.js";
 import { log } from "./log.js";
-// dist/index.js → ../package.json resolves to the package root at runtime.
-const require = createRequire(import.meta.url);
-const { version } = require("../package.json");
-const HELP = `mattermost-mcp ${version}
+const HELP = `mattermost-mcp ${VERSION}
 
 MCP (stdio) server for the Mattermost REST API v4.
 
@@ -29,17 +22,17 @@ async function main() {
   switch (command) {
     case undefined:
       // No args: an MCP client launched us — serve on stdio.
-      await runServer();
+      await (await import("./server.js")).runServer();
       return;
     case "login":
-      await runLogin(process.argv.slice(3));
+      await (await import("./commands/login.js")).runLogin(process.argv.slice(3));
       return;
     case "status":
     case "whoami":
-      await runStatus();
+      await (await import("./commands/status.js")).runStatus();
       return;
     case "logout":
-      runLogout();
+      (await import("./commands/logout.js")).runLogout();
       return;
     case "help":
     case "-h":
@@ -48,7 +41,7 @@ async function main() {
       return;
     case "-v":
     case "--version":
-      process.stdout.write(`${version}\n`);
+      process.stdout.write(`${VERSION}\n`);
       return;
     default:
       process.stderr.write(`Unknown command: ${command}\n\n${HELP}`);
