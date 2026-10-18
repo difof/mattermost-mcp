@@ -167,11 +167,11 @@
     "coverage": "Convenience tools cover 33 method/path pairs; api_call dispatches every session/public core HTTP operation through a pinned catalog. api_search and api_describe are local discovery only. Special cloud/remote-cluster authentication and local-socket operations are catalogued but cannot use the configured account credential. Coverage is transport exposure, not a claim that every PAT has the required account permissions, license, features, input variants or live compatibility."
   },
   "mcp_source_sha256": {
-    "src/tools/users.ts": "cb71eae0cbe89a9f624ea410391a4a08a10ecc649f4c216cd5ec7caa075c45c1",
-    "src/tools/messaging.ts": "1359fdbbf54e88c8669e4774fc5f39d1e2ab8f732c8979f09343a79efbd542ac",
-    "src/tools/channels.ts": "a5657413110820105ff980af955b6e9adfb90203d5899f856f3d8198f83f8285",
-    "src/tools/files.ts": "1ba51a399039d9c6e55867a08ade002eca245889b8099b2b64bd2d390772bf92",
-    "src/tools/api.js": "91ec0c7e969fca742889090ac2bda83f33f41bd197549553508eb7db471367f5"
+    "src/tools/users.js": "0557fbbd642e7033c1c11b004157483316d481f9543790eeff159732a5fc128e",
+    "src/tools/messaging.js": "07b0148f955ae968ae9c6ed52040e72d8a397169b4f7c1de6b1374d1855d1b40",
+    "src/tools/channels.js": "4233d8f32fb51bd555d1873829047135cd13049182f553d5d7edcf0fa63ded4f",
+    "src/tools/files.js": "36b87a8ddeb9089c5ec621d25e052036841621e2830555dced92e638b92a9427",
+    "src/tools/api.js": "c10ca904bf64f866da0d0924a32ce0adb4fcec0e32fac576701c56b677961bcb"
   },
   "counts": {
     "mcp_tools": 37,
