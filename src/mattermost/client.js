@@ -3,9 +3,11 @@
 import mattermost from "@mattermost/client";
 import { acquireOAuthToken, refreshOAuthToken } from "./oauth.js";
 import { formatMattermostError } from "./errors.js";
-import { applyRequestTimeout, applyRequestResilience, DEFAULT_RESILIENCE } from "./resilience.js";
+import { applyRequestTimeout, applyRequestResilience } from "./resilience.js";
+import { DEFAULT_RESILIENCE } from "../config.js";
 import { log } from "../log.js";
-const USER_AGENT = "mattermost-mcp/0.1.0";
+import { VERSION } from "../version.js";
+const USER_AGENT = `mattermost-mcp/${VERSION}`;
 /** Construct a headless Client4 (Bearer-only, cookies off, per-request timeout). */
 export function buildClient(url, timeoutMs) {
   const client = new mattermost.Client4();
@@ -47,7 +49,7 @@ export async function createSession(config) {
         return;
       case "oauth2": {
         // Cache-first; runs interactive consent only when no usable token exists.
-        oauthTokens = await acquireOAuthToken(url, auth);
+        oauthTokens = await acquireOAuthToken(url, auth, resilience.timeoutMs);
         client.setToken(oauthTokens.accessToken);
         return;
       }
@@ -62,7 +64,7 @@ export async function createSession(config) {
     }
     if (auth.mode === "oauth2" && oauthTokens?.refreshToken) {
       log("access token expired (401) — refreshing");
-      oauthTokens = await refreshOAuthToken(url, auth, oauthTokens);
+      oauthTokens = await refreshOAuthToken(url, auth, oauthTokens, resilience.timeoutMs);
       client.setToken(oauthTokens.accessToken);
       return true;
     }
@@ -79,6 +81,9 @@ export async function createSession(config) {
     }
     return recovery;
   };
+  // Cached OAuth access tokens can be revoked before their recorded expiry.
+  // Apply the same recovery policy to startup verification and later requests.
+  applyRequestResilience(client, resilience, recoverAuthentication);
   // Fail fast with an actionable message instead of a raw API error dump.
   let me;
   try {
@@ -91,7 +96,6 @@ export async function createSession(config) {
     );
   }
   log(`authenticated as @${me.username} (${me.id}) via ${auth.mode}`);
-  applyRequestResilience(client, resilience, recoverAuthentication);
   return {
     client,
     config,
