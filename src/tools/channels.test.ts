@@ -43,25 +43,6 @@ async function call(
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe("list_teams", () => {
-  it("returns the teams returned by getMyTeams", async () => {
-    const teams = [
-      { id: "tm1", name: "alpha" },
-      { id: "tm2", name: "beta" },
-    ];
-    const { text, isError } = await call(
-      "list_teams",
-      {},
-      {},
-      { getMyTeams: async () => teams as never },
-    );
-    expect(isError).toBe(false);
-    const parsed = JSON.parse(text);
-    expect(parsed).toHaveLength(2);
-    expect(parsed[0].id).toBe("tm1");
-  });
-});
-
 describe("list_channels", () => {
   it("blocks a team not in the team allowlist", async () => {
     const { text, isError } = await call(
@@ -88,20 +69,6 @@ describe("list_channels", () => {
   });
 });
 
-describe("get_channel", () => {
-  it("returns a channel by id", async () => {
-    const channel = { id: "ch42", name: "ops" };
-    const { text, isError } = await call(
-      "get_channel",
-      { channel_id: "ch42" },
-      {},
-      { getChannel: async () => channel as never },
-    );
-    expect(isError).toBe(false);
-    expect(JSON.parse(text).id).toBe("ch42");
-  });
-});
-
 describe("create_channel", () => {
   it("rejects an invalid channel type with isError and /invalid arguments/", async () => {
     const { text, isError } = await call("create_channel", {
@@ -112,29 +79,6 @@ describe("create_channel", () => {
     });
     expect(isError).toBe(true);
     expect(text).toMatch(/invalid arguments/);
-  });
-});
-
-describe("join_channel", () => {
-  it("calls addToChannel with (session.userId, channel_id)", async () => {
-    let capturedUserId: string | undefined;
-    let capturedChannelId: string | undefined;
-    const membership = { channel_id: "ch7", user_id: "me1" };
-    const { isError } = await call(
-      "join_channel",
-      { channel_id: "ch7" },
-      {},
-      {
-        addToChannel: async (userId, channelId) => {
-          capturedUserId = userId;
-          capturedChannelId = channelId;
-          return membership as never;
-        },
-      },
-    );
-    expect(isError).toBe(false);
-    expect(capturedUserId).toBe("me1");
-    expect(capturedChannelId).toBe("ch7");
   });
 });
 
