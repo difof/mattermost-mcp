@@ -1,10 +1,8 @@
 import { z } from "zod";
-import { defineTool, type AnyToolDef } from "./registry.js";
-
 // ---------------------------------------------------------------------------
 // post_message — POST /posts
 // ---------------------------------------------------------------------------
-const postMessage = defineTool({
+const postMessage = {
   name: "post_message",
   title: "Post message",
   description: "Send a new message to a channel (POST /posts).",
@@ -33,12 +31,11 @@ const postMessage = defineTool({
         ...(args.props != null ? { props: args.props } : {}),
       }),
     ),
-});
-
+};
 // ---------------------------------------------------------------------------
 // reply_thread — POST /posts (with root_id)
 // ---------------------------------------------------------------------------
-const replyThread = defineTool({
+const replyThread = {
   name: "reply_thread",
   title: "Reply to thread",
   description: "Reply to an existing thread (POST /posts with root_id).",
@@ -59,12 +56,11 @@ const replyThread = defineTool({
         root_id: args.root_id,
       }),
     ),
-});
-
+};
 // ---------------------------------------------------------------------------
 // get_channel_posts — GET /channels/{id}/posts
 // ---------------------------------------------------------------------------
-const getChannelPosts = defineTool({
+const getChannelPosts = {
   name: "get_channel_posts",
   title: "Get channel posts",
   description: "Fetch posts from a channel (GET /channels/{id}/posts).",
@@ -117,22 +113,21 @@ const getChannelPosts = defineTool({
     const page = args.page ?? 0;
     const perPage = args.per_page ?? 60;
     if (args.since != null) {
-      return session.call((c) => c.getPostsSince(args.channel_id, args.since!));
+      return session.call((c) => c.getPostsSince(args.channel_id, args.since));
     }
     if (args.before != null) {
-      return session.call((c) => c.getPostsBefore(args.channel_id, args.before!, page, perPage));
+      return session.call((c) => c.getPostsBefore(args.channel_id, args.before, page, perPage));
     }
     if (args.after != null) {
-      return session.call((c) => c.getPostsAfter(args.channel_id, args.after!, page, perPage));
+      return session.call((c) => c.getPostsAfter(args.channel_id, args.after, page, perPage));
     }
     return session.call((c) => c.getPosts(args.channel_id, page, perPage));
   },
-});
-
+};
 // ---------------------------------------------------------------------------
 // get_thread — GET /posts/{id}/thread
 // ---------------------------------------------------------------------------
-const getThread = defineTool({
+const getThread = {
   name: "get_thread",
   title: "Get thread",
   description: "Fetch a full post thread (GET /posts/{id}/thread).",
@@ -145,12 +140,11 @@ const getThread = defineTool({
   // fetchAll preserves this tool's full-thread contract on Mattermost v11.
   handler: (args, { session }) =>
     session.call((c) => c.getPaginatedPostThread(args.post_id, { fetchAll: true })),
-});
-
+};
 // ---------------------------------------------------------------------------
 // get_post — GET /posts/{id}
 // ---------------------------------------------------------------------------
-const getPost = defineTool({
+const getPost = {
   name: "get_post",
   title: "Get post",
   description: "Fetch a single post by id (GET /posts/{id}).",
@@ -160,12 +154,11 @@ const getPost = defineTool({
   resources: (args) => ({ postId: args.post_id }),
   resultScope: "post",
   handler: (args, { session }) => session.call((c) => c.getPost(args.post_id)),
-});
-
+};
 // ---------------------------------------------------------------------------
 // search_posts — POST /teams/{id}/posts/search
 // ---------------------------------------------------------------------------
-const searchPosts = defineTool({
+const searchPosts = {
   name: "search_posts",
   title: "Search posts",
   description: "Search for posts in a team (POST /teams/{id}/posts/search).",
@@ -182,12 +175,11 @@ const searchPosts = defineTool({
   resultScope: "posts",
   handler: (args, { session }) =>
     session.call((c) => c.searchPosts(args.team_id, args.terms, args.is_or_search ?? false)),
-});
-
+};
 // ---------------------------------------------------------------------------
 // edit_post — PUT /posts/{id}/patch
 // ---------------------------------------------------------------------------
-const editPost = defineTool({
+const editPost = {
   name: "edit_post",
   title: "Edit post",
   description: "Edit the text of an existing post (PUT /posts/{id}/patch).",
@@ -201,12 +193,11 @@ const editPost = defineTool({
   messageText: (args) => args.message,
   handler: (args, { session }) =>
     session.call((c) => c.patchPost({ id: args.post_id, message: args.message })),
-});
-
+};
 // ---------------------------------------------------------------------------
 // delete_post — DELETE /posts/{id}
 // ---------------------------------------------------------------------------
-const deletePost = defineTool({
+const deletePost = {
   name: "delete_post",
   title: "Delete post",
   description: "Delete a post (soft delete; DELETE /posts/{id}).",
@@ -217,12 +208,11 @@ const deletePost = defineTool({
   destructive: true,
   resources: (args) => ({ postId: args.post_id }),
   handler: (args, { session }) => session.call((c) => c.deletePost(args.post_id)),
-});
-
+};
 // ---------------------------------------------------------------------------
 // send_dm — POST /channels/direct or /channels/group, then POST /posts
 // ---------------------------------------------------------------------------
-const sendDm = defineTool({
+const sendDm = {
   name: "send_dm",
   title: "Send DM",
   description:
@@ -257,12 +247,11 @@ const sendDm = defineTool({
     );
     return session.call((c) => c.createPost({ channel_id: channel.id, message: args.message }));
   },
-});
-
+};
 // ---------------------------------------------------------------------------
 // pin_post — POST /posts/{id}/pin
 // ---------------------------------------------------------------------------
-const pinPost = defineTool({
+const pinPost = {
   name: "pin_post",
   title: "Pin post",
   description: "Pin a post to its channel (POST /posts/{id}/pin).",
@@ -272,12 +261,11 @@ const pinPost = defineTool({
   write: true,
   resources: (args) => ({ postId: args.post_id }),
   handler: (args, { session }) => session.call((c) => c.pinPost(args.post_id)),
-});
-
+};
 // ---------------------------------------------------------------------------
 // unpin_post — POST /posts/{id}/unpin
 // ---------------------------------------------------------------------------
-const unpinPost = defineTool({
+const unpinPost = {
   name: "unpin_post",
   title: "Unpin post",
   description: "Unpin a post from its channel (POST /posts/{id}/unpin).",
@@ -287,12 +275,11 @@ const unpinPost = defineTool({
   write: true,
   resources: (args) => ({ postId: args.post_id }),
   handler: (args, { session }) => session.call((c) => c.unpinPost(args.post_id)),
-});
-
+};
 // ---------------------------------------------------------------------------
 // add_reaction — POST /reactions
 // ---------------------------------------------------------------------------
-const addReaction = defineTool({
+const addReaction = {
   name: "add_reaction",
   title: "Add reaction",
   description: "Add an emoji reaction to a post (POST /reactions).",
@@ -304,12 +291,11 @@ const addReaction = defineTool({
   resources: (args) => ({ postId: args.post_id }),
   handler: (args, { session }) =>
     session.call((c) => c.addReaction(session.userId, args.post_id, args.emoji_name)),
-});
-
+};
 // ---------------------------------------------------------------------------
 // remove_reaction — DELETE /users/{uid}/posts/{pid}/reactions/{emoji}
 // ---------------------------------------------------------------------------
-const removeReaction = defineTool({
+const removeReaction = {
   name: "remove_reaction",
   title: "Remove reaction",
   description:
@@ -322,12 +308,11 @@ const removeReaction = defineTool({
   resources: (args) => ({ postId: args.post_id }),
   handler: (args, { session }) =>
     session.call((c) => c.removeReaction(session.userId, args.post_id, args.emoji_name)),
-});
-
+};
 // ---------------------------------------------------------------------------
 // Export
 // ---------------------------------------------------------------------------
-export const messagingTools: AnyToolDef[] = [
+export const messagingTools = [
   postMessage,
   replyThread,
   getChannelPosts,
