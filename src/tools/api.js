@@ -95,7 +95,7 @@ const apiCall = {
   compact: true,
   handler: async (args, { session }) => {
     const operation = resolveOperation(args.operation);
-    await assertApiAccess(operation, args, session);
+    assertApiAccess(operation, args, session);
     return session.call((client) => callApi(client, operation, args));
   },
 };
