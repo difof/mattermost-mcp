@@ -5,6 +5,20 @@
 Legend: ⚠️ = write (blocked by `MM_READ_ONLY=true`) · 💥 = destructive (requires
 `MM_ALLOW_DESTRUCTIVE=true` **and** `confirm: true` per call)
 
+## Arguments and errors
+
+Use argument names exactly as advertised by `tools/list`. Extra argument names are rejected;
+for example, `post_message` accepts `root_id`, and rejects a misspelled `rootId` before posting.
+
+Convenience tools accept raw IDs, usernames and reaction names. Supply each as a literal value
+without URL encoding, path separators, query/fragment syntax, whitespace or control characters.
+Dot-only values are also rejected. These checks apply to IDs inside `user_ids` and `file_ids`;
+Mattermost still validates the actual identifiers and names.
+
+An unknown tool name raises the JSON-RPC `InvalidParams` error (`-32602`). Invalid arguments,
+guardrail refusals and Mattermost API failures return a tool result with `isError: true` and a
+message describing the failure.
+
 ## Full API (3)
 
 These three tools expose the pinned core API without adding hundreds of schemas to every MCP
@@ -96,6 +110,9 @@ and cannot be combined with either cursor or `page`/`per_page`; the server caps 
 1,000 posts, so use paginated history for a complete backfill. For `send_dm`, supply only distinct
 IDs of the other participants (one for a DM, two to seven for a group).
 
+For a new channel post, omit `post_message.root_id` or pass an empty string. To reply, provide
+the thread's root post ID.
+
 ## Channels & Teams (12)
 
 | Tool                   | Description                                     |
@@ -138,6 +155,10 @@ expiration against its own clock.
 | `upload_file` ⚠️    | Upload a file to a channel (base64 content); returns file ids to attach via `post_message.file_ids`. |
 | `get_file`          | Download a file's content as base64 (configurable `max_bytes` cap, default 8 MiB).                   |
 | `get_file_metadata` | File info (`GET /files/{id}/info`).                                                                  |
+
+Uploads require canonical base64, including padding when required; malformed content is rejected
+before the upload request. Download limits apply to decoded bytes and error bodies. Metadata
+responses are capped at 1 MiB. Metadata and download requests reject HTTP redirects.
 
 ## Personal-account workflows
 
