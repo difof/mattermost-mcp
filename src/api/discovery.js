@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { GuardrailError } from "../guardrails.js";
 import { operationGuard } from "./policy.js";
 
-// Generated data stays outside the tool schemas and TypeScript's type graph.
+// Generated data stays outside the MCP tool input schemas.
 export const apiCatalog = JSON.parse(
   readFileSync(new URL("./catalog.json", import.meta.url), "utf8"),
 );
