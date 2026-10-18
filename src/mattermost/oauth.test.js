@@ -11,12 +11,9 @@ import {
   tokenCacheFile,
   readTokenCache,
   writeTokenCache,
-  type OAuthTokens,
 } from "./oauth.js";
-
-const b64url = (buf: Buffer): string =>
+const b64url = (buf) =>
   buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-
 describe("pkcePair", () => {
   it("produces a url-safe 43-char verifier", () => {
     const { verifier } = pkcePair();
@@ -31,7 +28,6 @@ describe("pkcePair", () => {
     expect(pkcePair().verifier).not.toBe(pkcePair().verifier);
   });
 });
-
 describe("buildAuthorizeUrl", () => {
   it("targets {url}/oauth/authorize with required + PKCE params", () => {
     const u = new URL(
@@ -52,7 +48,6 @@ describe("buildAuthorizeUrl", () => {
     expect(u.searchParams.get("code_challenge_method")).toBe("S256");
   });
 });
-
 describe("parseTokenResponse", () => {
   it("maps a full response and computes expiresAt", () => {
     const now = 1_000_000;
@@ -86,9 +81,8 @@ describe("parseTokenResponse", () => {
     expect(() => parseTokenResponse({ token_type: "bearer" }, 0)).toThrow();
   });
 });
-
 describe("isTokenExpired", () => {
-  const base: OAuthTokens = { accessToken: "at", tokenType: "Bearer" };
+  const base = { accessToken: "at", tokenType: "Bearer" };
   it("never expires without an expiresAt", () => {
     expect(isTokenExpired(base, 9_999_999)).toBe(false);
   });
@@ -101,7 +95,6 @@ describe("isTokenExpired", () => {
     expect(isTokenExpired({ ...base, expiresAt }, expiresAt + 1)).toBe(true);
   });
 });
-
 describe("tokenCacheFile", () => {
   it("is deterministic, hashed, and under mattermost-mcp", () => {
     const a = tokenCacheFile("https://mm.example.com", "cid");
@@ -119,11 +112,10 @@ describe("tokenCacheFile", () => {
     );
   });
 });
-
 describe("token cache read/write", () => {
   it("round-trips tokens through disk", () => {
     const file = join(tmpdir(), `mm-mcp-test-${process.pid}`, "oauth.json");
-    const tokens: OAuthTokens = {
+    const tokens = {
       accessToken: "at",
       refreshToken: "rt",
       tokenType: "Bearer",
