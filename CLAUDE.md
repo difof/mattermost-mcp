@@ -33,9 +33,11 @@ v5 and dynamically defined plugin APIs are outside the generic executor's accoun
 
 ## Rules
 
-- IMPORTANT: stdout is the MCP channel. Log ONLY to stderr. Never write to stdout.
-- Validate every tool input with a zod schema before use.
-- All writes go through `src/guardrails.js`. Destructive operations require arg `confirm: true`
+- On the MCP server path, stdout is the protocol channel; log only to stderr. CLI commands
+  may write their results to stdout.
+- Validate tool arguments with strict Zod object schemas before use. Convenience tools use
+  `src/tools/route-params.js` for identifiers and names interpolated into SDK routes.
+- Tool writes go through `src/guardrails.js`. Destructive operations require arg `confirm: true`
   AND env `MM_ALLOW_DESTRUCTIVE=true`. `MM_READ_ONLY=true` disables all writes. API policy is
   operation-specific; never infer safety solely from the HTTP verb or caller input.
 - Surface Mattermost API errors verbatim (status code + message). Do not swallow.
@@ -50,19 +52,28 @@ v5 and dynamically defined plugin APIs are outside the generic executor's accoun
 
 ## Layout
 
-- `src/index.js` — CLI entry: dispatches `login`/`status`/`logout`/`--help` or starts the server
+- `src/index.js` — CLI entry: loads only the requested command or server; help/version need no auth
+- `src/version.js` — package version shared by CLI output, MCP initialization and User-Agent headers
 - `src/server.js` — MCP server bootstrap (stdio)
 - `src/commands/` — CLI subcommands (`login`, `status`, `logout`)
-- `src/config.js` — env parsing + validation (zod)
+- `src/config.js` — shared defaults, env parsing and server/OAuth redirect URL validation
 - `src/credentials.js` — saved-login store (0600) + `resolveConfig` (env overrides saved creds)
+- `src/private-json.js` — atomic, private JSON writes for credentials and OAuth tokens
 - `src/paths.js` — config-dir / credentials-file locations (XDG-aware)
-- `src/prompt.js` — dependency-free interactive stdin helpers: masked secret + `select()` arrow-key menu (raw-mode TTY, non-TTY numbered fallback)
+- `src/prompt.js` — masked secrets, selection menus and buffered answers from piped stdin
 - `src/mattermost/` — `Client4` wrapper + auth strategies (incl. `browser.js` — Chrome discovery + `MMAUTHTOKEN` capture for `login --gitlab`; `default-browser.js` — OS default-browser detection, Chromium-only)
-- `src/guardrails.js` — read-only / destructive / allowlist checks
-- `src/api/` — JavaScript discovery, policy and bounded transport; generated `catalog.json`
+- `src/mattermost/resilience.js` — per-request timeouts, safe retries and authentication recovery
+- `src/mattermost/http-response.js` — decoded response limits and HTTP error handling shared by
+  API/file transport; OAuth also uses its bounded reader
+- `src/mattermost/files.js` / `binary.js` — file metadata/downloads and shared base64 decoding
+- `src/guardrails.js` — pure write, destructive, allowlist and message-length checks
+- `src/resource-guardrails.js` — resource resolution, per-call read caches and result filtering
+- `src/api/` — discovery and operation policy; `request.js` serializes requests, `client.js`
+  executes them and decodes results; `catalog.json` is generated data
 - `scripts/audit-api-coverage.mjs` / `generate-api-catalog.mjs` — development-only inventory and
   catalog generation from pinned official sources; use the npm `yaml` parser
-- `src/tools/` — plain tool definitions per domain (messaging, channels, users, files) + `registry.js`
+- `src/tools/` — plain tool definitions per domain; `registry.js` owns MCP schemas, dispatch,
+  validation and error mapping; `route-params.js` validates literal convenience-tool route values
 
 ## Conventions
 
