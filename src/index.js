@@ -5,11 +5,9 @@ import { runLogin } from "./commands/login.js";
 import { runLogout } from "./commands/logout.js";
 import { runStatus } from "./commands/status.js";
 import { log } from "./log.js";
-
 // dist/index.js → ../package.json resolves to the package root at runtime.
 const require = createRequire(import.meta.url);
-const { version } = require("../package.json") as { version: string };
-
+const { version } = require("../package.json");
 const HELP = `mattermost-mcp ${version}
 
 MCP (stdio) server for the Mattermost REST API v4.
@@ -26,8 +24,7 @@ Usage:
 Credentials saved by \`login\` are used by the server automatically.
 MM_* environment variables override saved credentials. See the README for all options.
 `;
-
-async function main(): Promise<void> {
+async function main() {
   const command = process.argv[2];
   switch (command) {
     case undefined:
@@ -58,8 +55,7 @@ async function main(): Promise<void> {
       process.exitCode = 1;
   }
 }
-
-main().catch((err: unknown) => {
+main().catch((err) => {
   log(`fatal: ${err instanceof Error ? err.message : String(err)}`);
   process.exit(1);
 });
