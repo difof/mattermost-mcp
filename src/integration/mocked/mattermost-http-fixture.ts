@@ -1,8 +1,7 @@
 // Offline integration harness: MCP Client -> registry -> real Client4 -> loopback HTTP.
 // Only the Mattermost server is simulated. Every request must match a queued contract;
 // unexpected requests, missing requests, wrong credentials, and outside origins fail.
-// API failures use Mattermost AppError JSON (including status_code); this does not
-// emulate server permissions or arbitrary reverse-proxy error formats.
+// These are transport contracts, not an emulation of server permission checks.
 import assert from "node:assert/strict";
 import { createServer, type IncomingHttpHeaders, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -23,18 +22,22 @@ export const OK = { status: "OK" };
 const TOKEN = "test-only-personal-pat";
 const DEPLOYMENT_PATH = "/mattermost";
 
-type Method = "GET" | "POST" | "PUT" | "DELETE";
-type Query = Record<string, string | number | boolean>;
+type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
+type QueryValue = string | number | boolean;
+type Query = Record<string, QueryValue | QueryValue[]>;
 
 interface Exchange {
   query?: Query;
   body?: unknown;
   inspectBody?: (bytes: Buffer, headers: IncomingHttpHeaders) => void | Promise<void>;
+  requestHeaders?: Record<string, string | undefined>;
+  fetchRedirect?: RequestInit["redirect"];
   reply?: unknown;
   status?: number;
   headers?: Record<string, string>;
   bytes?: Buffer;
   chunked?: boolean;
+  empty?: boolean;
 }
 
 interface ExpectedRequest extends Exchange {
@@ -43,6 +46,7 @@ interface ExpectedRequest extends Exchange {
 }
 
 interface FixtureOptions {
+  user?: typeof ME;
   guardrails?: Partial<GuardrailConfig>;
   resilience?: Partial<ResilienceConfig>;
 }
@@ -55,6 +59,7 @@ async function readBody(request: IncomingMessage): Promise<Buffer> {
 
 export class MattermostHttpFixture {
   readonly guardrails: GuardrailConfig;
+  url = "";
   private readonly expected: ExpectedRequest[] = [];
   private readonly failures: string[] = [];
   private readonly http = createServer((request, response) => {
@@ -108,7 +113,9 @@ export class MattermostHttpFixture {
     assert.deepEqual(
       [...url.searchParams.entries()].sort(),
       Object.entries(expectation.query ?? {})
-        .map(([key, value]) => [key, String(value)])
+        .flatMap(([key, value]) =>
+          (Array.isArray(value) ? value : [value]).map((item) => [key, String(item)]),
+        )
         .sort(),
       `Wrong query: ${received}`,
     );
@@ -116,6 +123,9 @@ export class MattermostHttpFixture {
     assert.equal(scheme?.toLowerCase(), "bearer", `Missing PAT auth: ${received}`);
     assert.equal(token, TOKEN, `Wrong PAT identity: ${received}`);
     assert.equal(request.headers.cookie, undefined, "PAT requests must not depend on cookies");
+    for (const [name, value] of Object.entries(expectation.requestHeaders ?? {})) {
+      assert.equal(request.headers[name.toLowerCase()], value, `Wrong ${name} header: ${received}`);
+    }
     const body = await readBody(request);
     if (expectation.inspectBody) {
       await expectation.inspectBody(body, request.headers);
@@ -124,7 +134,14 @@ export class MattermostHttpFixture {
     } else {
       assert.equal(body.length, 0, `Unexpected request body: ${received}`);
     }
-    const bytes = expectation.bytes ?? Buffer.from(JSON.stringify(expectation.reply ?? OK));
+    const noBody =
+      expectation.empty ||
+      expectation.method === "HEAD" ||
+      [204, 304].includes(expectation.status ?? 200);
+    const bytes = noBody
+      ? Buffer.alloc(0)
+      : (expectation.bytes ??
+        Buffer.from(JSON.stringify(Object.hasOwn(expectation, "reply") ? expectation.reply : OK)));
     return { expectation, bytes };
   }
 
@@ -134,19 +151,23 @@ export class MattermostHttpFixture {
       this.http.listen(0, "127.0.0.1", resolve);
     });
     const origin = `http://127.0.0.1:${(this.http.address() as AddressInfo).port}`;
+    this.url = `${origin}${DEPLOYMENT_PATH}`;
     const nativeFetch = globalThis.fetch;
     // Enforce offline operation but let the real fetch perform every local exchange.
     const fetchGuard = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = new URL(input instanceof Request ? input.url : String(input));
       assert.equal(url.origin, origin, "Integration tests cannot contact outside services");
+      if (this.expected[0]?.fetchRedirect != null) {
+        assert.equal(init?.redirect, this.expected[0].fetchRedirect, "Unsafe redirect mode");
+      }
       return nativeFetch(input, init);
     });
     this.restoreFetch = () => fetchGuard.mockRestore();
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     this.restoreLog = () => log.mockRestore();
-    this.expect("GET", "/users/me", { reply: ME });
+    this.expect("GET", "/users/me", { reply: this.options.user ?? ME });
     const session = await createSession({
-      url: `${origin}${DEPLOYMENT_PATH}`,
+      url: this.url,
       auth: { mode: "pat", token: TOKEN },
       guardrails: this.guardrails,
       resilience: { timeoutMs: 2000, maxRetries: 1, baseDelayMs: 1, ...this.options.resilience },
