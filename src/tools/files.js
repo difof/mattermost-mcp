@@ -1,13 +1,10 @@
 import { z } from "zod";
-import { defineTool, type AnyToolDef } from "./registry.js";
 import { fetchFileContent, fetchFileMetadata } from "../mattermost/files.js";
-
 const DEFAULT_MAX_BYTES = 8 * 1024 * 1024;
-
 // ---------------------------------------------------------------------------
 // upload_file — POST /files (multipart)
 // ---------------------------------------------------------------------------
-const uploadFile = defineTool({
+const uploadFile = {
   name: "upload_file",
   title: "Upload file",
   description:
@@ -33,12 +30,11 @@ const uploadFile = defineTool({
         mime_type: f.mime_type,
       }));
     }),
-});
-
+};
 // ---------------------------------------------------------------------------
 // get_file_metadata — GET /files/{id}/info
 // ---------------------------------------------------------------------------
-const getFileMetadata = defineTool({
+const getFileMetadata = {
   name: "get_file_metadata",
   title: "Get file metadata",
   description: "Fetch metadata for a file (GET /files/{id}/info).",
@@ -47,12 +43,11 @@ const getFileMetadata = defineTool({
   }),
   resources: (args) => ({ fileId: args.file_id }),
   handler: (args, { session }) => session.call((c) => fetchFileMetadata(c, args.file_id)),
-});
-
+};
 // ---------------------------------------------------------------------------
 // get_file — GET /files/{id}
 // ---------------------------------------------------------------------------
-const getFile = defineTool({
+const getFile = {
   name: "get_file",
   title: "Get file",
   description:
@@ -76,6 +71,5 @@ const getFile = defineTool({
         content_base64: buf.toString("base64"),
       };
     }),
-});
-
-export const fileTools: AnyToolDef[] = [uploadFile, getFile, getFileMetadata];
+};
+export const fileTools = [uploadFile, getFile, getFileMetadata];
