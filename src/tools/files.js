@@ -1,5 +1,7 @@
 import { z } from "zod";
-import { fetchFileContent, fetchFileMetadata } from "../mattermost/files.js";
+import { routeSegment } from "./route-params.js";
+import { fetchFileContent } from "../mattermost/files.js";
+import { decodeBase64 } from "../mattermost/binary.js";
 const DEFAULT_MAX_BYTES = 8 * 1024 * 1024;
 // ---------------------------------------------------------------------------
 // upload_file — POST /files (multipart)
@@ -9,16 +11,18 @@ const uploadFile = {
   title: "Upload file",
   description:
     "Upload a file to a channel (POST /files multipart). Returns file ids that can be passed to post_message.file_ids.",
-  inputSchema: z.object({
-    channel_id: z.string().describe("Channel to upload the file into."),
-    filename: z.string().describe("File name (including extension)."),
-    content_base64: z.string().describe("File bytes encoded as base64."),
-  }),
+  inputSchema: z
+    .object({
+      channel_id: routeSegment.describe("Channel to upload the file into."),
+      filename: z.string().describe("File name (including extension)."),
+      content_base64: z.string().describe("File bytes encoded as base64."),
+    })
+    .strict(),
   write: true,
   resources: (args) => ({ channelId: args.channel_id }),
   handler: (args, { session }) =>
     session.call(async (c) => {
-      const bytes = Buffer.from(args.content_base64, "base64");
+      const bytes = decodeBase64(args.content_base64);
       const fd = new FormData();
       fd.append("channel_id", args.channel_id);
       fd.append("files", new Blob([bytes]), args.filename);
@@ -38,11 +42,13 @@ const getFileMetadata = {
   name: "get_file_metadata",
   title: "Get file metadata",
   description: "Fetch metadata for a file (GET /files/{id}/info).",
-  inputSchema: z.object({
-    file_id: z.string().describe("File id."),
-  }),
+  inputSchema: z
+    .object({
+      file_id: routeSegment.describe("File id."),
+    })
+    .strict(),
   resources: (args) => ({ fileId: args.file_id }),
-  handler: (args, { session }) => session.call((c) => fetchFileMetadata(c, args.file_id)),
+  handler: (args, { resources }) => resources.file(args.file_id),
 };
 // ---------------------------------------------------------------------------
 // get_file — GET /files/{id}
@@ -52,15 +58,17 @@ const getFile = {
   title: "Get file",
   description:
     "Download a file and return its content as base64 (GET /files/{id}). Capped at max_bytes to prevent huge payloads.",
-  inputSchema: z.object({
-    file_id: z.string().describe("File id."),
-    max_bytes: z
-      .number()
-      .int()
-      .positive()
-      .optional()
-      .describe(`Maximum number of bytes to accept (default ${DEFAULT_MAX_BYTES}).`),
-  }),
+  inputSchema: z
+    .object({
+      file_id: routeSegment.describe("File id."),
+      max_bytes: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe(`Maximum number of bytes to accept (default ${DEFAULT_MAX_BYTES}).`),
+    })
+    .strict(),
   resources: (args) => ({ fileId: args.file_id }),
   handler: (args, { session }) =>
     session.call(async (c) => {
