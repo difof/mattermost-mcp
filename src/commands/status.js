@@ -2,8 +2,7 @@
 // authenticate, and print the current identity. Proves the saved credentials work.
 import { resolveConfig } from "../credentials.js";
 import { createSession } from "../mattermost/client.js";
-
-export async function runStatus(): Promise<void> {
+export async function runStatus() {
   let config;
   try {
     config = resolveConfig();
@@ -14,7 +13,6 @@ export async function runStatus(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-
   const session = await createSession(config);
   const me = await session.call((c) => c.getMe());
   process.stdout.write(
