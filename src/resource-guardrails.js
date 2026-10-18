@@ -4,6 +4,8 @@ import { GuardrailError, assertChannelAllowed, assertTeamAllowed } from "./guard
 export class ResourceGuard {
   session;
   channels = new Map();
+  posts = new Map();
+  files = new Map();
   constructor(session) {
     this.session = session;
   }
@@ -16,6 +18,20 @@ export class ResourceGuard {
     const channel = await this.session.call((c) => c.getChannel(id));
     this.channels.set(id, channel);
     return channel;
+  }
+  async post(id) {
+    const cached = this.posts.get(id);
+    if (cached) return cached;
+    const post = await this.session.call((c) => c.getPost(id));
+    this.posts.set(id, post);
+    return post;
+  }
+  async file(id) {
+    const cached = this.files.get(id);
+    if (cached) return cached;
+    const file = await this.session.call((c) => fetchFileMetadata(c, id));
+    this.files.set(id, file);
+    return file;
   }
   async assertChannel(id) {
     assertChannelAllowed(id, this.config);
@@ -42,17 +58,17 @@ export class ResourceGuard {
       return;
     }
     if (postId != null) {
-      const post = await this.session.call((c) => c.getPost(postId));
+      const post = await this.post(postId);
       await this.assertChannel(post.channel_id);
     }
     const files = new Set(fileIds ?? []);
     if (fileId != null) files.add(fileId);
     for (const id of files) {
-      const file = await this.session.call((c) => fetchFileMetadata(c, id));
+      const file = await this.file(id);
       if (file.channel_id) {
         await this.assertChannel(file.channel_id);
       } else if (file.post_id) {
-        const post = await this.session.call((c) => c.getPost(file.post_id));
+        const post = await this.post(file.post_id);
         await this.assertChannel(post.channel_id);
       } else {
         throw new GuardrailError("refused: cannot resolve the file's channel for the allowlists");
@@ -111,7 +127,10 @@ export class ResourceGuard {
       }
       return allowed;
     }
-    if (scope === "post") return this.sanitizePost(result);
+    if (scope === "post") {
+      await this.assertChannel(result.channel_id);
+      return this.sanitizePost(result);
+    }
     const source = result;
     const posts = {};
     for (const [id, post] of Object.entries(source.posts)) {
