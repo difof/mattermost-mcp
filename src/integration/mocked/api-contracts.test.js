@@ -1,7 +1,7 @@
 import { Blob } from "node:buffer";
 import { gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
-import { useMattermost } from "./mattermost-http-fixture.ts";
+import { useMattermost } from "./mattermost-http-fixture.js";
 
 // Curated wire contracts, independent of the generated catalog/schema sampler.
 // Sources: Mattermost 3acb3a7f684d11ccfcec4e5bd11c79f64e3eabf9,
