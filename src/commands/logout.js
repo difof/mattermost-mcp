@@ -6,15 +6,16 @@ import { credentialsFile } from "../paths.js";
 import { tokenCacheFile } from "../mattermost/oauth.js";
 export function runLogout() {
   const creds = readCredentials();
-  const removed = clearCredentials();
   // Drop the cached OAuth access/refresh tokens for this server too.
+  // Keep the saved login if this fails so another logout can find the cache.
   if (creds?.auth.mode === "oauth2") {
     try {
       rmSync(tokenCacheFile(creds.url, creds.auth.clientId));
-    } catch {
-      // no cache to remove — fine
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
     }
   }
+  const removed = clearCredentials();
   process.stdout.write(
     removed
       ? `✓ Logged out — removed ${credentialsFile()}\n`
