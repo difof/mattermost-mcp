@@ -1,8 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { loadConfig } from "./config.js";
-
-const base = { MM_URL: "https://mm.example.com" } as const;
-
+const base = { MM_URL: "https://mm.example.com" };
 describe("loadConfig — url", () => {
   it("rejects a missing url", () => {
     expect(() => loadConfig({ MM_TOKEN: "x" })).toThrow(/MM_URL/);
@@ -33,7 +31,6 @@ describe("loadConfig — url", () => {
     expect(c.url).toBe("http://127.0.0.1:8065");
   });
 });
-
 describe("loadConfig — auth", () => {
   it("defaults to pat mode and requires MM_TOKEN", () => {
     expect(() => loadConfig({ ...base })).toThrow(/MM_TOKEN/);
@@ -84,7 +81,6 @@ describe("loadConfig — auth", () => {
     );
   });
 });
-
 describe("loadConfig — guardrails", () => {
   it("applies safe defaults", () => {
     const c = loadConfig({ ...base, MM_TOKEN: "x" });
