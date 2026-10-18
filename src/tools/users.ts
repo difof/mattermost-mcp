@@ -70,12 +70,39 @@ export const setCustomStatus = defineTool({
   name: "set_custom_status",
   title: "Set custom status",
   description:
-    "Set a custom status (emoji + text) for the authenticated user (PUT /users/me/status/custom).",
-  inputSchema: z.object({
-    emoji: z.string(),
-    text: z.string(),
-    duration: z.string().optional(),
-  }),
+    "Set a custom status (emoji + text) for the authenticated user (PUT /users/me/status/custom). A nonempty duration requires expires_at; the server does not calculate an expiration time.",
+  inputSchema: z
+    .object({
+      emoji: z.string(),
+      text: z.string(),
+      duration: z
+        .enum([
+          "",
+          "thirty_minutes",
+          "one_hour",
+          "four_hours",
+          "today",
+          "this_week",
+          "date_and_time",
+        ])
+        .optional()
+        .describe("Expiration label. Omit or use an empty string for no preset duration."),
+      expires_at: z
+        .string()
+        .datetime({ offset: true })
+        // Zod also accepts minute-only times and offsets without a colon.
+        // Mattermost's Go time decoder expects RFC3339 with seconds and Z or ±HH:MM.
+        .regex(
+          /T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/,
+          "expires_at must be an RFC3339 timestamp with seconds and a timezone",
+        )
+        .optional()
+        .describe("RFC3339 expiration time. The server requires it to be in the future."),
+    })
+    .refine((args) => !args.duration || args.expires_at != null, {
+      path: ["expires_at"],
+      message: "expires_at is required for a nonempty duration",
+    }),
   write: true,
   handler: (args, { session }) =>
     session.call((c) =>
@@ -83,6 +110,7 @@ export const setCustomStatus = defineTool({
         emoji: args.emoji,
         text: args.text,
         duration: args.duration ?? "",
+        ...(args.expires_at != null ? { expires_at: args.expires_at } : {}),
       } as Parameters<typeof c.updateCustomStatus>[0]),
     ),
 });
