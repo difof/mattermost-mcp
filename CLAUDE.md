@@ -1,7 +1,7 @@
 # mattermost-mcp
 
 MCP server (stdio) exposing the Mattermost REST API v4 as tools, for self-hosted instances.
-User docs, tool catalog, and configuration reference live in `README.md`.
+Start with `README.md`; full tool, configuration, testing and API coverage references live in `docs/`.
 
 ## Scope
 
@@ -18,6 +18,8 @@ webhooks/slash-command provisioning, compliance/data-retention, Boards/Playbooks
 - `npm run dev` — run the server over stdio (tsx)
 - `npm run build` — `tsc` → `dist/`
 - `npm test` — vitest. Single file: `npx vitest run src/tools/messaging.test.ts`
+- `npm run test:mocks` — real MCP/Client4 requests against a local mock API (no credentials)
+- `npm run test:integration` — optional real-server smoke tests (see `docs/testing.md`)
 - `npm run lint` — eslint + prettier
 
 ## Stack (fixed — do not swap)
