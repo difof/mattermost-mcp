@@ -9,45 +9,68 @@
 | `npm test`                 | Unit tests and mocked API workflows | No                              |
 | `npm run test:mocks`       | Only the MCP-to-HTTP mock suite     | No                              |
 | `npm run test:integration` | Optional live-server smoke tests    | Yes                             |
-| `npm run build`            | Production TypeScript build         | No                              |
+| `npm run build`            | Clean production JS/TS build        | No                              |
 | `npm run lint`             | ESLint and Prettier                 | No                              |
 
 Live tests are skipped during `npm test` unless `MM_INTEGRATION=1` is explicitly set. Production
-builds exclude the integration test directory, so the HTTP fixture is not shipped in `dist/`.
+builds clean `dist/`, compile JavaScript and TypeScript, and copy the generated API catalog.
+Tests and the integration fixture are excluded. The test-only resolver in `vitest.config.js`
+lets new JavaScript modules use the existing production `.js` import paths into TypeScript
+source; native JavaScript files take precedence during gradual migration.
 
 ## What the API mocks test
 
-The 32 mocked tests make successful calls to all 34 exposed tools, including tools that share a
-REST endpoint. An explicit catalog assertion detects additions or removals that need review.
+The mock suite exercises all **37 exposed tools**. The original 34 convenience tools retain
+their 32 workflow tests; three API tools add catalog, transport and policy coverage for the
+complete pinned account-compatible HTTP inventory.
 
 The mock suite uses a real MCP client/server pair, the production tool registry, `createSession`,
 and the installed Mattermost `Client4`. Only Mattermost itself is replaced by a loopback HTTP
 server with synthetic users, channels, posts and a fake PAT.
 
-The HTTP fixture checks the request method, path, query, body and Bearer authentication.
-Unexpected requests and unconsumed expectations fail the test. Test cases assert the decoded
-MCP result as well as the request contract. Nothing connects to a configured production server.
+The shared HTTP fixture checks request methods, paths, queries, headers, bodies and fake-PAT
+Bearer authentication. Unexpected requests and unconsumed expectations fail the test. Calls
+outside the local mock URL are blocked, and the fixture checks manual redirect handling. Test
+cases assert the decoded MCP result as well as the request contract. Nothing connects to a
+configured production server.
 
-| Suite                                                                                | Workflows                                                                                                                      |
-| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| [Personal messaging](../src/integration/mocked/personal-messaging.test.ts)           | Identity and presence; user lookup; existing DMs/groups; posting, replies, history, threads, search, edits, pins and reactions |
-| [Channels and membership](../src/integration/mocked/channels-and-membership.test.ts) | Teams/channels; ordinary channel lifecycle and membership; pagination; actual unread counts; read state                        |
-| [Files and errors](../src/integration/mocked/files-and-errors.test.ts)               | Multipart uploads and attachments; metadata and binary downloads; API errors; safe-read retries; mutation failures; guardrails |
+| Suite                                                                                  | Workflows                                                                                                                                                                  |
+| -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Personal messaging](../src/integration/mocked/personal-messaging.test.ts)             | Identity and presence; user lookup; existing DMs/groups; posting, replies, history, threads, search, edits, pins and reactions                                             |
+| [Channels and membership](../src/integration/mocked/channels-and-membership.test.ts)   | Teams/channels; ordinary channel lifecycle and membership; pagination; actual unread counts; read state                                                                    |
+| [Files and errors](../src/integration/mocked/files-and-errors.test.ts)                 | Multipart uploads and attachments; metadata and binary downloads; API errors; safe-read retries; mutation failures; guardrails                                             |
+| [API catalog and dispatch](../src/integration/mocked/api-catalog-dispatch.test.js)     | All 601 inventory entries; 590 successful route dispatches; 11 special-auth/local refusals; on-demand schema closure; search and aliases                                   |
+| [API contracts](../src/integration/mocked/api-contracts.test.js)                       | JSON arrays/scalars/null, repeated queries, multipart/raw/resumable uploads, binary/text/HEAD/304, redirects, bounded streams and seven source-checked join-request routes |
+| [API authentication and policy](../src/integration/mocked/api-auth-and-policy.test.js) | HTTP-status/error preservation; account/header/path boundaries; read-only/destructive checks; allowlists; message limits; read retries and write replay prevention         |
+
+### Exhaustive dispatch versus endpoint semantics
+
+The dispatch suite compares the runtime catalog against the independently generated
+[`docs/api-coverage.json`](api-coverage.json), including authentication and transport
+classification. It groups the **590 account-compatible operations** by their six HTTP methods
+and sends each through the real registry and transport. Expected method/path values come from
+the audit's canonical route keys, independently of the production URL builder. The remaining
+six special-auth HTTP and five local-socket operations must fail before a request is sent.
+
+Structural request samples follow the available schemas, and synthetic responses identify the
+selected operation. This proves dispatch and representative serialization, not that Mattermost
+accepts every generated business object. Curated contract tests separately check real request
+shapes against pinned server handlers, including corrections to incomplete OpenAPI definitions.
+Description tests verify the transitive schema references for every inventory record, with
+response schemas returned only when requested.
 
 These are contract and workflow tests. Their responses are controlled fixtures, so they do not
 prove how a live Mattermost deployment enforces permissions, search indexing, retention, feature
 flags or licenses. A simulated `403` verifies error propagation, not Mattermost's authorization
-implementation. See [API coverage](api-coverage.md) for the pinned official API version, the routes
-these tools expose and the missing endpoints.
+implementation. See [API coverage](api-coverage.md) for the pinned official version, source
+corrections and the exact boundaries of full account-API coverage.
 
-Error fixtures use Mattermost's normal `AppError` JSON, including `status_code`. The installed
-Client4 reads the error code from that body; arbitrary proxy error pages or altered response
-content types are outside this suite's compatibility claim.
+Convenience-tool error fixtures use Mattermost's normal `AppError` JSON, including `status_code`,
+as consumed by Client4. The generic transport additionally tests empty and proxy-text errors,
+charset-bearing JSON and a mismatched body status: the actual HTTP status remains authoritative.
+Oversized error responses stop at the configured limit and are not retried.
 
 ## Test cleanup policy
-
-This revision replaces 30 redundant cases, including the former stub-only MCP integration file,
-with the 32 HTTP workflow tests. The reduced unit suites retain the independent regressions below.
 
 Keep tests that catch an independent failure. Replace simple “tool calls SDK method” assertions
 when a real MCP-to-HTTP test covers that method's route, payload and returned value. Use tables
@@ -58,8 +81,10 @@ stream cancellation, exact byte limits, concurrent authentication recovery, cred
 file permissions, schema conflicts and indirect resource restrictions. Exercising those policies
 once at the HTTP/MCP boundary complements the detailed unit cases.
 
-Mocking every unexposed Mattermost endpoint would test the mock itself. Add endpoint fixtures
-when an MCP tool actually uses that endpoint; keep the inventory of missing APIs in the audit.
+Keep exhaustive route dispatch table-driven rather than adding hundreds of near-identical test
+functions. Add a source-checked contract case when an endpoint has distinct serialization or
+response behavior, and add a focused regression when a bug reveals a separate failure mode.
+Do not duplicate Mattermost's business logic in the mock server.
 
 ## Optional live checks
 
