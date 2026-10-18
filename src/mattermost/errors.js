@@ -16,7 +16,3 @@ export function formatMattermostError(err) {
   }
   return err instanceof Error ? err.message : String(err);
 }
-/** True if the error originates from the Mattermost API (a mattermost.ClientError). */
-export function isMattermostError(err) {
-  return err instanceof mattermost.ClientError;
-}
