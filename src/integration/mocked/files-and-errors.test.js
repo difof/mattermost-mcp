@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ErrorCode } from "@modelcontextprotocol/sdk/types.js";
 import { ME, PEER, OK, useMattermost } from "./mattermost-http-fixture.js";
 describe("file transfers and failures through MCP and HTTP", () => {
   const fixture = useMattermost();
@@ -64,6 +65,27 @@ describe("file transfers and failures through MCP and HTTP", () => {
       content_base64: "",
     });
   });
+  it("decodes BOM-prefixed file metadata and API errors like Fetch", async () => {
+    const mm = fixture();
+    const metadata = { id: "bom-file", name: "sample.txt" };
+    mm.expect("GET", "/files/bom-file/info", {
+      bytes: Buffer.from(`\uFEFF${JSON.stringify(metadata)}`),
+      headers: { "Content-Type": "application/json" },
+    });
+    expect(await mm.call("get_file_metadata", { file_id: metadata.id })).toEqual(metadata);
+    mm.expect("GET", "/files/bom-file", {
+      status: 403,
+      bytes: Buffer.from(
+        '\uFEFF{"message":"Permission denied","id":"api.file.denied","detailed_error":"Missing read_channel"}',
+      ),
+      headers: { "Content-Type": "application/json" },
+    });
+    const error = await mm.error("get_file", { file_id: metadata.id });
+    expect(error).toContain("403");
+    expect(error).toContain("Permission denied");
+    expect(error).toContain("api.file.denied");
+    expect(error).toContain("Missing read_channel");
+  });
   it.each([false, true])(
     "rejects an oversized download without retry (chunked=%s)",
     async (chunked) => {
@@ -74,6 +96,32 @@ describe("file transfers and failures through MCP and HTTP", () => {
       );
     },
   );
+  it.each([
+    ["get_file", "/files/bounded-error", { file_id: "bounded-error", max_bytes: 8 }, 8],
+    ["get_file_metadata", "/files/bounded-error/info", { file_id: "bounded-error" }, 1024 * 1024],
+  ])(
+    "bounds %s error bodies without retrying a deterministic size failure",
+    async (tool, path, args, limit) => {
+      const mm = fixture();
+      mm.expect("GET", path, { status: 503, bytes: Buffer.alloc(limit + 1, 65) });
+      const error = await mm.error(tool, args);
+      expect(error).toContain("503");
+      expect(error).toContain(`max_bytes (${limit})`);
+    },
+  );
+  it.each([
+    ["get_file", "/files/redirected-file"],
+    ["get_file_metadata", "/files/redirected-file/info"],
+  ])("refuses %s redirects before another route can be requested", async (tool, path) => {
+    const mm = fixture();
+    mm.expect("GET", path, {
+      status: 302,
+      empty: true,
+      headers: { Location: `${mm.url}/api/v4/posts/other-post/reveal` },
+      fetchRedirect: "manual",
+    });
+    expect(await mm.error(tool, { file_id: "redirected-file" })).toContain("302");
+  });
   it("retries transient read failures at the HTTP boundary, including read-only POST search", async () => {
     const mm = fixture();
     mm.expect("GET", "/channels/project-channel", {
@@ -193,7 +241,7 @@ describe("file transfers and failures through MCP and HTTP", () => {
     expect(await mm.error("get_user", { user_id: PEER.id, username: PEER.username })).toContain(
       "exactly one",
     );
-    expect(await mm.error("not_a_tool")).toContain("unknown tool");
+    await expect(mm.call("not_a_tool")).rejects.toMatchObject({ code: ErrorCode.InvalidParams });
     expect(await mm.error("search_posts", { team_id: "", terms: "plan" })).toContain(
       "invalid arguments",
     );
