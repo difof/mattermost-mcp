@@ -80,6 +80,22 @@ describe("loadConfig — auth", () => {
       /MM_AUTH_MODE/,
     );
   });
+  it.each([
+    "https://127.0.0.1:7000/callback",
+    "http://example.com:7000/callback",
+    "http://127.0.0.1:0/callback",
+    "http://127.0.0.1:7000/callback?query=ignored",
+  ])("rejects an OAuth redirect the local catcher cannot serve: %s", (MM_OAUTH_REDIRECT) => {
+    expect(() =>
+      loadConfig({
+        ...base,
+        MM_AUTH_MODE: "oauth2",
+        MM_CLIENT_ID: "client",
+        MM_CLIENT_SECRET: "dummy-secret",
+        MM_OAUTH_REDIRECT,
+      }),
+    ).toThrow(/MM_OAUTH_REDIRECT.*HTTP loopback OAuth redirect/);
+  });
 });
 describe("loadConfig — guardrails", () => {
   it("applies safe defaults", () => {
