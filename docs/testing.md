@@ -9,14 +9,13 @@
 | `npm test`                 | Unit tests and mocked API workflows | No                              |
 | `npm run test:mocks`       | Only the MCP-to-HTTP mock suite     | No                              |
 | `npm run test:integration` | Optional live-server smoke tests    | Yes                             |
-| `npm run build`            | Clean production JS/TS build        | No                              |
+| `npm run build`            | Clean JavaScript runtime package    | No                              |
 | `npm run lint`             | ESLint and Prettier                 | No                              |
 
 Live tests are skipped during `npm test` unless `MM_INTEGRATION=1` is explicitly set. Production
-builds clean `dist/`, compile JavaScript and TypeScript, and copy the generated API catalog.
-Tests and the integration fixture are excluded. The test-only resolver in `vitest.config.js`
-lets new JavaScript modules use the existing production `.js` import paths into TypeScript
-source; native JavaScript files take precedence during gradual migration.
+builds clean `dist/` and copy the JavaScript runtime and generated API catalog. Tests and the
+integration fixture are excluded. Source and production use the same native `.js` imports;
+there is no compiler or custom test resolver.
 
 ## What the API mocks test
 
@@ -36,9 +35,9 @@ configured production server.
 
 | Suite                                                                                  | Workflows                                                                                                                                                                  |
 | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Personal messaging](../src/integration/mocked/personal-messaging.test.ts)             | Identity and presence; user lookup; existing DMs/groups; posting, replies, history, threads, search, edits, pins and reactions                                             |
-| [Channels and membership](../src/integration/mocked/channels-and-membership.test.ts)   | Teams/channels; ordinary channel lifecycle and membership; pagination; actual unread counts; read state                                                                    |
-| [Files and errors](../src/integration/mocked/files-and-errors.test.ts)                 | Multipart uploads and attachments; metadata and binary downloads; API errors; safe-read retries; mutation failures; guardrails                                             |
+| [Personal messaging](../src/integration/mocked/personal-messaging.test.js)             | Identity and presence; user lookup; existing DMs/groups; posting, replies, history, threads, search, edits, pins and reactions                                             |
+| [Channels and membership](../src/integration/mocked/channels-and-membership.test.js)   | Teams/channels; ordinary channel lifecycle and membership; pagination; actual unread counts; read state                                                                    |
+| [Files and errors](../src/integration/mocked/files-and-errors.test.js)                 | Multipart uploads and attachments; metadata and binary downloads; API errors; safe-read retries; mutation failures; guardrails                                             |
 | [API catalog and dispatch](../src/integration/mocked/api-catalog-dispatch.test.js)     | All 601 inventory entries; 590 successful route dispatches; 11 special-auth/local refusals; on-demand schema closure; search and aliases                                   |
 | [API contracts](../src/integration/mocked/api-contracts.test.js)                       | JSON arrays/scalars/null, repeated queries, multipart/raw/resumable uploads, binary/text/HEAD/304, redirects, bounded streams and seven source-checked join-request routes |
 | [API authentication and policy](../src/integration/mocked/api-auth-and-policy.test.js) | HTTP-status/error preservation; account/header/path boundaries; read-only/destructive checks; allowlists; message limits; read retries and write replay prevention         |
