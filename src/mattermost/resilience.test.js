@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import mattermost from "@mattermost/client";
-import type { Client4 } from "@mattermost/client";
 import {
   isRetryableStatus,
   isRetryableError,
@@ -8,19 +7,15 @@ import {
   applyRequestResilience,
   applyRequestTimeout,
   runClientRequest,
-  type ResilienceConfig,
 } from "./resilience.js";
-
-const cfg = (over: Partial<ResilienceConfig> = {}): ResilienceConfig => ({
+const cfg = (over = {}) => ({
   timeoutMs: 0,
   maxRetries: 3,
   baseDelayMs: 100,
   ...over,
 });
-
-const mmError = (status: number) =>
+const mmError = (status) =>
   new mattermost.ClientError("http://mm.test", { message: "boom", status_code: status });
-
 describe("isRetryableStatus", () => {
   it("retries rate-limit, server errors, and network/zero/unknown", () => {
     for (const s of [429, 500, 503, 599, 0, undefined]) expect(isRetryableStatus(s)).toBe(true);
@@ -29,7 +24,6 @@ describe("isRetryableStatus", () => {
     for (const s of [400, 401, 403, 404, 200]) expect(isRetryableStatus(s)).toBe(false);
   });
 });
-
 describe("isRetryableError", () => {
   it("retries a transient ClientError but not a 401/404", () => {
     expect(isRetryableError(mmError(503))).toBe(true);
@@ -46,21 +40,18 @@ describe("isRetryableError", () => {
     expect(isRetryableError(new Error("nope"))).toBe(false);
   });
 });
-
 describe("withRetry", () => {
   const noSleep = vi.fn(async () => {});
   const noJitter = () => 0;
-
   it("returns immediately on success (no sleep)", async () => {
     const fn = vi.fn(async () => "ok");
     await expect(withRetry(fn, cfg(), noSleep, noJitter)).resolves.toBe("ok");
     expect(fn).toHaveBeenCalledTimes(1);
     expect(noSleep).not.toHaveBeenCalled();
   });
-
   it("retries transient failures then succeeds, with exponential backoff", async () => {
-    const sleeps: number[] = [];
-    const sleep = vi.fn(async (ms: number) => void sleeps.push(ms));
+    const sleeps = [];
+    const sleep = vi.fn(async (ms) => void sleeps.push(ms));
     let calls = 0;
     const fn = vi.fn(async () => {
       calls += 1;
@@ -73,7 +64,6 @@ describe("withRetry", () => {
     expect(fn).toHaveBeenCalledTimes(3);
     expect(sleeps).toEqual([100, 200]); // 100*2^0, 100*2^1 (jitter 0)
   });
-
   it("gives up after maxRetries and rethrows the last error", async () => {
     const fn = vi.fn(async () => {
       throw mmError(500);
@@ -90,7 +80,6 @@ describe("withRetry", () => {
     });
     expect(fn).toHaveBeenCalledTimes(3); // 1 + 2 retries
   });
-
   it("does not retry a non-transient error", async () => {
     const fn = vi.fn(async () => {
       throw mmError(404);
@@ -101,7 +90,6 @@ describe("withRetry", () => {
     expect(fn).toHaveBeenCalledTimes(1);
   });
 });
-
 describe("trusted operation retry policy", () => {
   it.each([
     { method: "GET", retrySafe: false, calls: 1 },
@@ -111,7 +99,6 @@ describe("trusted operation retry policy", () => {
     client.setUrl("http://mm.test");
     applyRequestResilience(client, cfg({ maxRetries: 1, baseDelayMs: 0 }));
     const operation = vi.fn().mockRejectedValueOnce(mmError(503)).mockResolvedValue("ok");
-
     // The caller supplies trusted operation metadata independently of the verb:
     // v11 policy activation is a GET mutation, and bulk lookup uses POST.
     const result = runClientRequest(
@@ -126,31 +113,25 @@ describe("trusted operation retry policy", () => {
     expect(operation).toHaveBeenCalledTimes(calls);
   });
 });
-
 describe("applyRequestTimeout", () => {
-  function fakeClient(): {
-    getOptions: (o: unknown) => { headers: Record<string, string>; signal?: AbortSignal };
-  } {
+  function fakeClient() {
     return { getOptions: () => ({ headers: {} }) };
   }
-
   it("injects an AbortSignal when a timeout is set", () => {
     const client = fakeClient();
-    applyRequestTimeout(client as unknown as Client4, 5000);
+    applyRequestTimeout(client, 5000);
     const opts = client.getOptions({});
     expect(opts.signal).toBeInstanceOf(AbortSignal);
   });
-
   it("is a no-op when the timeout is 0", () => {
     const client = fakeClient();
-    applyRequestTimeout(client as unknown as Client4, 0);
+    applyRequestTimeout(client, 0);
     expect(client.getOptions({}).signal).toBeUndefined();
   });
-
   it("does not overwrite an existing signal", () => {
     const existing = AbortSignal.timeout(1000);
     const client = { getOptions: () => ({ headers: {}, signal: existing }) };
-    applyRequestTimeout(client as unknown as Client4, 5000);
+    applyRequestTimeout(client, 5000);
     expect(client.getOptions().signal).toBe(existing);
   });
 });
