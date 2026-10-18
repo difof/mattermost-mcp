@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
 import mattermost from "@mattermost/client";
+import { ErrorCode } from "@modelcontextprotocol/sdk/types.js";
 import { buildToolList, dispatchToolCall } from "./registry.js";
 import { getMe } from "./users.js";
 // --- fixtures ----------------------------------------------------------------
@@ -113,10 +114,11 @@ describe("dispatchToolCall", () => {
     expect(isError).toBe(false);
     expect(text).toContain("alice");
   });
-  it("reports an unknown tool", async () => {
-    const { text, isError } = await call("nope", {});
-    expect(isError).toBe(true);
-    expect(text).toMatch(/unknown tool/);
+  it("reports an unknown tool as a protocol InvalidParams error", async () => {
+    await expect(call("nope", {})).rejects.toMatchObject({
+      code: ErrorCode.InvalidParams,
+      message: expect.stringContaining("unknown tool: nope"),
+    });
   });
   it("rejects invalid arguments", async () => {
     const { text, isError } = await call("needs_id", {});
