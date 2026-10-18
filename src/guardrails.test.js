@@ -1,5 +1,4 @@
 import { describe, it, expect } from "vitest";
-import type { GuardrailConfig } from "./config.js";
 import {
   GuardrailError,
   assertNotReadOnly,
@@ -8,10 +7,8 @@ import {
   assertTeamAllowed,
   assertChannelAllowed,
   assertMessageWithinLimit,
-  type ToolGuard,
 } from "./guardrails.js";
-
-const g = (over: Partial<GuardrailConfig> = {}): GuardrailConfig => ({
+const g = (over = {}) => ({
   readOnly: false,
   allowDestructive: false,
   teamAllowlist: [],
@@ -19,11 +16,9 @@ const g = (over: Partial<GuardrailConfig> = {}): GuardrailConfig => ({
   maxMessageLen: 16383,
   ...over,
 });
-
-const READ: ToolGuard = { name: "get_post" };
-const WRITE: ToolGuard = { name: "post_message", write: true };
-const DESTRUCTIVE: ToolGuard = { name: "delete_post", destructive: true };
-
+const READ = { name: "get_post" };
+const WRITE = { name: "post_message", write: true };
+const DESTRUCTIVE = { name: "delete_post", destructive: true };
 describe("assertNotReadOnly", () => {
   it("blocks a write tool in read-only mode", () => {
     expect(() => assertNotReadOnly(WRITE, g({ readOnly: true }))).toThrow(GuardrailError);
@@ -39,7 +34,6 @@ describe("assertNotReadOnly", () => {
     expect(() => assertNotReadOnly(WRITE, g())).not.toThrow();
   });
 });
-
 describe("assertDestructiveAllowed", () => {
   it("ignores non-destructive tools", () => {
     expect(() => assertDestructiveAllowed(WRITE, {}, g())).not.toThrow();
@@ -65,7 +59,6 @@ describe("assertDestructiveAllowed", () => {
     ).not.toThrow();
   });
 });
-
 describe("assertWriteAllowed (composition)", () => {
   it("read-only takes precedence over the destructive gate", () => {
     expect(() =>
@@ -85,7 +78,6 @@ describe("assertWriteAllowed (composition)", () => {
     ).not.toThrow();
   });
 });
-
 describe("assertTeamAllowed", () => {
   it("allows anything when the list is empty", () => {
     expect(() => assertTeamAllowed("t9", g())).not.toThrow();
@@ -99,7 +91,6 @@ describe("assertTeamAllowed", () => {
     );
   });
 });
-
 describe("assertChannelAllowed", () => {
   it("allows anything when the list is empty", () => {
     expect(() => assertChannelAllowed("c9", g())).not.toThrow();
@@ -113,7 +104,6 @@ describe("assertChannelAllowed", () => {
     );
   });
 });
-
 describe("assertMessageWithinLimit", () => {
   it("allows a message under the limit", () => {
     expect(() => assertMessageWithinLimit("hello", g({ maxMessageLen: 10 }))).not.toThrow();
