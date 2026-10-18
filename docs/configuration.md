@@ -33,7 +33,8 @@ Personal Access Token: ********
 ```
 
 The mode picker is keyboard-navigable (arrow keys / `j`·`k`, digits to jump, Enter to confirm). When
-input is not a TTY it falls back to a numbered prompt.
+input is not a TTY it falls back to a numbered prompt and accepts successive answers from piped
+lines. Piped secrets retain whitespace and are not echoed.
 
 - **pat** — saves the token as-is.
 - **password** — exchanges your password for a **session token** and saves _that_ (the password is
@@ -78,6 +79,11 @@ Blank environment values count as unset. Saved credentials are tied to their ser
 `MM_URL` to a different origin or subpath requires credentials for that server instead of reusing the
 saved token or password.
 
+The login wizard normalizes the server URL before checking the OAuth cache, verifying the account
+and saving credentials. Saved credentials and OAuth tokens are replaced atomically with `0600`
+permissions. `logout` reports filesystem failures; if it cannot remove the matching OAuth cache,
+it keeps the saved login so you can fix the problem and retry.
+
 In development you can place env vars in a `.env` file in the project root and export them before
 running; in production pass them directly to the process. The [`.env.example`](../.env.example) lists every setting. The server does not load `.env` automatically; export those variables or pass them in your MCP client configuration.
 
@@ -100,13 +106,13 @@ running; in production pass them directly to the process. The [`.env.example`](.
 | `MM_MFA_TOKEN`      | no              | —                                | MFA one-time code (only if the account enforces MFA).                                                                                                      |
 | `MM_CLIENT_ID`      | when `oauth2`   | —                                | OAuth2 app client id (register in Product menu → Integrations → OAuth 2.0 Applications).                                                                   |
 | `MM_CLIENT_SECRET`  | when `oauth2`   | —                                | OAuth2 app client secret.                                                                                                                                  |
-| `MM_OAUTH_REDIRECT` | no              | `http://127.0.0.1:7000/callback` | Loopback redirect URI (must start with `http://` or `https://`).                                                                                           |
+| `MM_OAUTH_REDIRECT` | no              | `http://127.0.0.1:7000/callback` | HTTP loopback redirect URI; see the supported hosts and restrictions under [oauth2](#oauth2).                                                              |
 
 #### Resilience
 
 | Variable                | Required | Default | Description                                                                             |
 | ----------------------- | -------- | ------- | --------------------------------------------------------------------------------------- |
-| `MM_REQUEST_TIMEOUT_MS` | no       | `30000` | Per-request timeout in ms (`0` disables).                                               |
+| `MM_REQUEST_TIMEOUT_MS` | no       | `30000` | Per-request timeout in ms, including OAuth token exchange and refresh (`0` disables).   |
 | `MM_MAX_RETRIES`        | no       | `3`     | Safe-read retries on `429` / `5xx` / network errors with exponential back-off + jitter. |
 | `MM_RETRY_BASE_MS`      | no       | `500`   | Back-off base delay in ms.                                                              |
 
@@ -163,7 +169,16 @@ MM_CLIENT_SECRET=your-client-secret
 
 On first run the server opens a browser for the authorization-code + PKCE S256 flow. Tokens are
 cached under `$XDG_CONFIG_HOME/mattermost-mcp` (or `~/.config/mattermost-mcp`) with `0600`
-permissions and refreshed transparently thereafter.
+permissions and refreshed transparently thereafter. A cached OAuth token rejected with `401`
+during the startup identity check can also be refreshed before startup continues.
+
+`MM_OAUTH_REDIRECT` must match the application's registered redirect URI. The callback listener
+supports HTTP on `127.0.0.1`, `[::1]` or `localhost` and binds the configured host. The port must be
+nonzero; HTTPS, remote hosts, credentials, query strings and fragments are rejected.
+
+Token exchange and refresh use `MM_REQUEST_TIMEOUT_MS` when the server runs; the `login` wizard
+uses the default 30-second timeout. Token responses are limited to 1 MiB of decoded bytes, and
+token-endpoint redirects are refused.
 
 > **Note:** Mattermost OAuth2 has no granular scopes — the token inherits the full access of the
 > authorizing user.
