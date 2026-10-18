@@ -60,10 +60,9 @@ The upstream `SearchFiles` operation ID is duplicated, so ambiguous aliases requ
 canonical identifier.
 
 The [generated runtime catalog](../src/api/catalog.json) stores shared JSON schemas and
-references rather than duplicating TypeScript interfaces for hundreds of endpoints. Description
-loads only the components referenced by the selected request; response schemas are opt-in.
-The new runtime and API tests are JavaScript, with minimal changes at existing TypeScript
-boundaries. MCP API results use compact JSON.
+references to keep operation descriptions compact. Description includes only the components
+referenced by the selected request; response schemas are opt-in. Runtime, tests and audit
+utilities are native JavaScript. MCP API results use compact JSON.
 
 ## Request and response support
 
@@ -151,15 +150,13 @@ live smoke tests remain explicitly opt-in; no real Mattermost account is used by
 
 ## Reproduce the inventory and catalog
 
-These are audit/development utilities, using Python 3.10+ and PyYAML. They are not runtime
-dependencies and are not required to install or run the MCP server.
+These native Node.js utilities use the development-only npm `yaml` parser. Run `npm ci` to
+install the development dependencies. The audit tools and parser are not required to run
+the packaged MCP server.
 
 ```bash
-python3 -m venv /tmp/mattermost-api-audit-venv
-/tmp/mattermost-api-audit-venv/bin/pip install PyYAML
-
-/tmp/mattermost-api-audit-venv/bin/python scripts/audit-api-coverage.py --download
-/tmp/mattermost-api-audit-venv/bin/python scripts/generate-api-catalog.py --download
+node scripts/audit-api-coverage.mjs --download
+node scripts/generate-api-catalog.mjs --download
 npx prettier --write docs/api-coverage.json src/api/catalog.json
 ```
 
@@ -169,5 +166,5 @@ requires a clean checkout at the exact pinned commit. The base 149 source files 
 supplemental model/app/web files are hash-verified. Inventory validation also tracks the MCP
 tool sources, so regenerate the audit before the catalog after tool-source changes.
 
-The production build starts with a clean `dist/`, compiles mixed JS/TS sources and copies the
-catalog. No audit scripts, source fixtures or tests are required in the published runtime.
+The production build copies native JavaScript and the catalog into a clean `dist/`.
+No compiler, audit scripts, source fixtures or tests are required in the published runtime.
