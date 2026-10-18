@@ -36,6 +36,10 @@ export interface ToolDef<S extends ZodTypeAny = ZodTypeAny> {
   write?: boolean;
   /** Destructive (needs MM_ALLOW_DESTRUCTIVE + confirm:true). Implies write. */
   destructive?: boolean;
+  /** Operation-specific policy for tools that dispatch multiple API operations. */
+  guard?: (args: z.infer<S>) => Omit<ToolGuard, "name">;
+  /** Avoid pretty-printing large machine-readable API results. */
+  compact?: boolean;
   /** Direct and indirect resource ids to resolve and check before the handler. */
   resources?: (args: z.infer<S>) => ToolResources;
   /** Filter collection results to the permitted resources. */
@@ -94,8 +98,10 @@ export function buildToolList(tools: AnyToolDef[]): { tools: McpTool[] } {
   return { tools: tools.map(toMcpTool) };
 }
 
-function formatResult(result: unknown): string {
-  return typeof result === "string" ? result : JSON.stringify(result, null, 2);
+function formatResult(result: unknown, compact = false): string {
+  return typeof result === "string"
+    ? result
+    : JSON.stringify(result, null, compact ? undefined : 2);
 }
 
 /**
@@ -122,10 +128,11 @@ export async function dispatchToolCall(
   const args = parsed.data as Record<string, unknown>;
 
   try {
+    const policy = tool.guard ? tool.guard(args) : tool;
     const guard: ToolGuard = {
       name: tool.name,
-      ...(tool.write ? { write: true } : {}),
-      ...(tool.destructive ? { destructive: true } : {}),
+      ...(policy.write ? { write: true } : {}),
+      ...(policy.destructive ? { destructive: true } : {}),
     };
     const g = ctx.session.config.guardrails;
 
@@ -142,6 +149,7 @@ export async function dispatchToolCall(
     return text(
       formatResult(
         tool.resultScope ? await resources.filterResult(tool.resultScope, result) : result,
+        tool.compact,
       ),
     );
   } catch (err) {
