@@ -1,7 +1,7 @@
 # mattermost-mcp
 
 Use your Mattermost account from an MCP agent: read conversations, send DMs and replies,
-manage channels, and work with files. **37 tools**, stdio transport, Node.js 20+.
+manage channels, and work with files. **37 tools**, native JavaScript, stdio transport, Node.js 20+.
 
 This is [difof's fork](https://github.com/difof/mattermost-mcp) of
 [BryanBerger98/mattermost-mcp](https://github.com/BryanBerger98/mattermost-mcp), with fixes for
@@ -59,6 +59,9 @@ additionally require `MM_ALLOW_DESTRUCTIVE=true` and `confirm: true` per call.
 [Team/channel restrictions and retry behavior](docs/configuration.md#guardrails) are configurable.
 
 ## Development
+
+Source runs directly with `npm run dev`. The build copies the JavaScript runtime and API catalog
+into a clean `dist/`; no compiler is needed.
 
 ```bash
 npm test             # unit tests + mocked API workflows; live tests skipped by default
