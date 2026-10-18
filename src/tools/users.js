@@ -1,17 +1,14 @@
 import { z } from "zod";
-import { defineTool, type AnyToolDef } from "./registry.js";
-
 /** Identity tool — the Phase 4 demo, wired end-to-end through the framework. */
-export const getMe = defineTool({
+export const getMe = {
   name: "get_me",
   title: "Get current user",
   description: "Return the authenticated Mattermost user (GET /users/me).",
   inputSchema: z.object({}),
   handler: (_args, { session }) => session.call((c) => c.getMe()),
-});
-
+};
 /** Look up a user by id or username (exactly one must be provided). */
-export const getUser = defineTool({
+export const getUser = {
   name: "get_user",
   title: "Get user",
   description:
@@ -26,12 +23,11 @@ export const getUser = defineTool({
     }),
   handler: (args, { session }) =>
     session.call((c) =>
-      args.user_id ? c.getUser(args.user_id) : c.getUserByUsername(args.username!),
+      args.user_id ? c.getUser(args.user_id) : c.getUserByUsername(args.username),
     ),
-});
-
+};
 /** Search users by a search term. */
-export const searchUsers = defineTool({
+export const searchUsers = {
   name: "search_users",
   title: "Search users",
   description: "Search Mattermost users by term (POST /users/search).",
@@ -39,10 +35,9 @@ export const searchUsers = defineTool({
     term: z.string().min(1),
   }),
   handler: (args, { session }) => session.call((c) => c.searchUsers(args.term, {})),
-});
-
+};
 /** Get the presence status of a user. */
-export const getUserStatus = defineTool({
+export const getUserStatus = {
   name: "get_user_status",
   title: "Get user status",
   description: "Return the presence status of a user (GET /users/{id}/status).",
@@ -50,10 +45,9 @@ export const getUserStatus = defineTool({
     user_id: z.string(),
   }),
   handler: (args, { session }) => session.call((c) => c.getStatus(args.user_id)),
-});
-
+};
 /** Set the presence status of the authenticated user. */
-export const setStatus = defineTool({
+export const setStatus = {
   name: "set_status",
   title: "Set status",
   description: "Set the presence status of the authenticated user (PUT /users/me/status).",
@@ -63,10 +57,9 @@ export const setStatus = defineTool({
   write: true,
   handler: (args, { session }) =>
     session.call((c) => c.updateStatus({ user_id: session.userId, status: args.status })),
-});
-
+};
 /** Set a custom status for the authenticated user. */
-export const setCustomStatus = defineTool({
+export const setCustomStatus = {
   name: "set_custom_status",
   title: "Set custom status",
   description:
@@ -111,15 +104,7 @@ export const setCustomStatus = defineTool({
         text: args.text,
         duration: args.duration ?? "",
         ...(args.expires_at != null ? { expires_at: args.expires_at } : {}),
-      } as Parameters<typeof c.updateCustomStatus>[0]),
+      }),
     ),
-});
-
-export const userTools: AnyToolDef[] = [
-  getMe,
-  getUser,
-  searchUsers,
-  getUserStatus,
-  setStatus,
-  setCustomStatus,
-];
+};
+export const userTools = [getMe, getUser, searchUsers, getUserStatus, setStatus, setCustomStatus];
