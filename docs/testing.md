@@ -19,9 +19,9 @@ there is no compiler or custom test resolver.
 
 ## What the API mocks test
 
-The mock suite exercises all **37 exposed tools**. The original 34 convenience tools retain
-their 32 workflow tests; three API tools add catalog, transport and policy coverage for the
-complete pinned account-compatible HTTP inventory.
+The mock suite exercises all **37 exposed tools**: personal-account workflows through the
+34 convenience tools, plus catalog, transport and policy coverage through the three API tools
+for the complete pinned account-compatible HTTP inventory.
 
 The mock suite uses a real MCP client/server pair, the production tool registry, `createSession`,
 and the installed Mattermost `Client4`. Only Mattermost itself is replaced by a loopback HTTP
@@ -69,6 +69,10 @@ as consumed by Client4. The generic transport additionally tests empty and proxy
 charset-bearing JSON and a mismatched body status: the actual HTTP status remains authoritative.
 Oversized error responses stop at the configured limit and are not retried.
 
+File and metadata requests also reject redirects, bound error bodies and recover from rejected
+OAuth tokens without losing the HTTP status when an error stream breaks. Transport regressions
+cover UTF-8 BOM decoding and malformed headers rejected before any retry or network request.
+
 ## Test cleanup policy
 
 Keep tests that catch an independent failure. Replace simple “tool calls SDK method” assertions
@@ -79,6 +83,12 @@ Focused unit tests remain useful for failures that are hard to reproduce reliabl
 stream cancellation, exact byte limits, concurrent authentication recovery, credential isolation,
 file permissions, schema conflicts and indirect resource restrictions. Exercising those policies
 once at the HTTP/MCP boundary complements the detailed unit cases.
+
+CLI subprocess tests cover dependency-free help/version output, buffered piped answers, EOF
+cancellation and exit with an open input pipe. Authentication tests cover atomic private-file
+replacement, failed logout cleanup, loopback OAuth callbacks, bounded token requests and cached
+tokens rejected during startup. Audit tests use disposable Git checkouts to verify the pinned
+revision and actual source hashes, including changes hidden by Git index flags.
 
 Keep exhaustive route dispatch table-driven rather than adding hundreds of near-identical test
 functions. Add a source-checked contract case when an endpoint has distinct serialization or
