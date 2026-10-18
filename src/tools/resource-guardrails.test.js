@@ -1,17 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Client4 } from "@mattermost/client";
-import type { GuardrailConfig } from "../config.js";
-import type { MattermostSession } from "../mattermost/types.js";
 import { fetchFileMetadata } from "../mattermost/files.js";
 import { allTools } from "./index.js";
 import { dispatchToolCall } from "./registry.js";
-
 vi.mock("../mattermost/files.js", async (original) => ({
-  ...(await original<typeof import("../mattermost/files.js")>()),
+  ...(await original()),
   fetchFileMetadata: vi.fn(),
 }));
-
-function fixture(guardrails: Partial<GuardrailConfig> = {}) {
+function fixture(guardrails = {}) {
   const client = {
     getChannel: vi.fn(async () => ({ id: "allowed", team_id: "team1" })),
     getPost: vi.fn(async () => ({ id: "post1", channel_id: "blocked" })),
@@ -44,9 +39,9 @@ function fixture(guardrails: Partial<GuardrailConfig> = {}) {
       prev_post_id: "p1",
     })),
   };
-  const session: MattermostSession = {
+  const session = {
     userId: "me",
-    client: client as unknown as Client4,
+    client: client,
     config: {
       url: "https://mm.test",
       auth: { mode: "pat", token: "test" },
@@ -59,21 +54,17 @@ function fixture(guardrails: Partial<GuardrailConfig> = {}) {
         ...guardrails,
       },
     },
-    call: (fn) => fn(client as unknown as Client4),
+    call: (fn) => fn(client),
   };
   return {
     client,
-    call: (name: string, args: Record<string, unknown> = {}) =>
-      dispatchToolCall(allTools, { session }, name, args),
+    call: (name, args = {}) => dispatchToolCall(allTools, { session }, name, args),
   };
 }
-
-function body(result: Awaited<ReturnType<typeof dispatchToolCall>>) {
-  return (result.content[0] as { text: string }).text;
+function body(result) {
+  return result.content[0].text;
 }
-
 beforeEach(() => vi.clearAllMocks());
-
 describe("resolved resource allowlists", () => {
   it("resolves a channel's team before allowing a write", async () => {
     const { client, call } = fixture({ channelAllowlist: [], teamAllowlist: ["team2"] });
@@ -82,7 +73,6 @@ describe("resolved resource allowlists", () => {
     expect(body(result)).toContain("MM_TEAM_ALLOWLIST");
     expect(client.createPost).not.toHaveBeenCalled();
   });
-
   it.each([
     ["get_post", {}],
     ["get_thread", {}],
@@ -109,7 +99,6 @@ describe("resolved resource allowlists", () => {
       expect(method).not.toHaveBeenCalled();
     expect(client.getPost).toHaveBeenCalledTimes(1);
   });
-
   it("allows an indirect write after resolving both channel and team", async () => {
     const { client, call } = fixture({ teamAllowlist: ["team1"] });
     client.getPost.mockResolvedValue({ id: "post1", channel_id: "allowed" });
@@ -118,7 +107,6 @@ describe("resolved resource allowlists", () => {
     expect(client.patchPost).toHaveBeenCalledTimes(1);
     expect(client.patchPost).toHaveBeenCalledWith({ id: "post1", message: "updated" });
   });
-
   it("does not introduce resource lookups when no allowlists are configured", async () => {
     const { client, call } = fixture({ channelAllowlist: [] });
     expect(
@@ -127,11 +115,10 @@ describe("resolved resource allowlists", () => {
     expect(client.getPost).not.toHaveBeenCalled();
     expect(client.getChannel).not.toHaveBeenCalled();
   });
-
   it.each(["get_file", "get_file_metadata"])(
     "blocks %s from a disallowed channel",
     async (name) => {
-      vi.mocked(fetchFileMetadata).mockResolvedValue({ channel_id: "blocked" } as never);
+      vi.mocked(fetchFileMetadata).mockResolvedValue({ channel_id: "blocked" });
       const { call } = fixture();
       const result = await call(name, { file_id: "f1" });
       expect(result.isError).toBe(true);
@@ -139,18 +126,16 @@ describe("resolved resource allowlists", () => {
       expect(fetchFileMetadata).toHaveBeenCalledTimes(1);
     },
   );
-
   it("resolves older file metadata through its post", async () => {
-    vi.mocked(fetchFileMetadata).mockResolvedValue({ post_id: "post1" } as never);
+    vi.mocked(fetchFileMetadata).mockResolvedValue({ post_id: "post1" });
     const { client, call } = fixture();
     const result = await call("get_file", { file_id: "f1" });
     expect(result.isError).toBe(true);
     expect(body(result)).toContain("MM_CHANNEL_ALLOWLIST");
     expect(client.getPost).toHaveBeenCalledWith("post1");
   });
-
   it("blocks attachments from another channel before posting", async () => {
-    vi.mocked(fetchFileMetadata).mockResolvedValue({ channel_id: "blocked" } as never);
+    vi.mocked(fetchFileMetadata).mockResolvedValue({ channel_id: "blocked" });
     const { client, call } = fixture();
     const result = await call("post_message", {
       channel_id: "allowed",
@@ -160,13 +145,11 @@ describe("resolved resource allowlists", () => {
     expect(result.isError).toBe(true);
     expect(client.createPost).not.toHaveBeenCalled();
   });
-
   it("fails closed when a file's channel cannot be resolved", async () => {
-    vi.mocked(fetchFileMetadata).mockResolvedValue({} as never);
+    vi.mocked(fetchFileMetadata).mockResolvedValue({});
     const { call } = fixture();
     expect(body(await call("get_file", { file_id: "f1" }))).toContain("cannot resolve");
   });
-
   it.each([{ channelAllowlist: ["allowed"] }, { channelAllowlist: [], teamAllowlist: ["team1"] }])(
     "refuses unscoped DM creation before any write: %j",
     async (guardrails) => {
@@ -177,7 +160,6 @@ describe("resolved resource allowlists", () => {
       expect(client.createPost).not.toHaveBeenCalled();
     },
   );
-
   it("refuses creating a channel that cannot yet be in the channel allowlist", async () => {
     const { client, call } = fixture();
     const result = await call("create_channel", {
@@ -189,7 +171,6 @@ describe("resolved resource allowlists", () => {
     expect(result.isError).toBe(true);
     expect(client.createChannel).not.toHaveBeenCalled();
   });
-
   it("filters team and channel listings by their applicable allowlists", async () => {
     const { call } = fixture({ teamAllowlist: ["team1"] });
     expect(JSON.parse(body(await call("list_teams")))).toEqual([{ id: "team1" }]);
@@ -197,13 +178,11 @@ describe("resolved resource allowlists", () => {
       { id: "allowed", team_id: "team1" },
     ]);
   });
-
   it("excludes other teams and teamless DMs under a team allowlist", async () => {
     const { call } = fixture({ channelAllowlist: [], teamAllowlist: ["team1"] });
     const result = JSON.parse(body(await call("list_channels", { team_id: "team1" })));
-    expect(result.map((channel: { id: string }) => channel.id)).toEqual(["allowed", "blocked"]);
+    expect(result.map((channel) => channel.id)).toEqual(["allowed", "blocked"]);
   });
-
   it("filters search content, order, match snippets, and cursor IDs together", async () => {
     const { call } = fixture();
     const result = await call("search_posts", { team_id: "team1", terms: "term" });
@@ -217,7 +196,6 @@ describe("resolved resource allowlists", () => {
     });
     expect(body(result)).not.toContain("hidden");
   });
-
   it.each(["get_post", "get_thread", "get_channel_posts", "search_posts"])(
     "omits cross-channel permalink preview content from %s",
     async (name) => {
@@ -243,7 +221,7 @@ describe("resolved resource allowlists", () => {
       const list = { posts: { p1: post }, order: ["p1"], next_post_id: "next-page" };
       client.getPaginatedPostThread.mockResolvedValue(list);
       Object.assign(client, { getPosts: vi.fn(async () => list) });
-      client.searchPosts.mockResolvedValue(list as never);
+      client.searchPosts.mockResolvedValue(list);
       const result = await call(name, {
         post_id: "p1",
         channel_id: "allowed",
@@ -259,7 +237,6 @@ describe("resolved resource allowlists", () => {
       }
     },
   );
-
   it("preserves permalink previews when no allowlists are configured", async () => {
     const { client, call } = fixture({ channelAllowlist: [] });
     const post = {
