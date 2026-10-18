@@ -3,8 +3,8 @@ import mattermost from "@mattermost/client";
 import { describe, expect, it, vi } from "vitest";
 import { callApi } from "../../api/client.js";
 import { resolveOperation } from "../../api/discovery.js";
-import { applyRequestResilience } from "../../mattermost/resilience.ts";
-import { ME, OK, useMattermost } from "./mattermost-http-fixture.ts";
+import { applyRequestResilience } from "../../mattermost/resilience.js";
+import { ME, OK, useMattermost } from "./mattermost-http-fixture.js";
 
 const ID = "a".repeat(26);
 const ACTIVATE = "GET /api/v4/access_control_policies/{policy_id}/activate";
