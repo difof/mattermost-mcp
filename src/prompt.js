@@ -2,17 +2,15 @@
 // All prompt I/O goes to stderr so that, even when a command's result is piped,
 // the prompts stay off stdout. EOF (Ctrl-D / closed stdin) aborts cleanly.
 import { createInterface, emitKeypressEvents } from "node:readline";
-
-function onAbort(): never {
+function onAbort() {
   process.stderr.write("\nAborted.\n");
   process.exit(130);
 }
-
 /** Ask a question and resolve with the trimmed answer. Aborts on EOF. */
-export function prompt(question: string): Promise<string> {
+export function prompt(question) {
   const rl = createInterface({ input: process.stdin, output: process.stderr });
   let answered = false;
-  return new Promise<string>((resolve) => {
+  return new Promise((resolve) => {
     rl.on("close", () => {
       if (!answered) onAbort();
     });
@@ -23,25 +21,18 @@ export function prompt(question: string): Promise<string> {
     });
   });
 }
-
-// readline exposes the echo hook as a private method; type it narrowly so we can
-// silence keystroke echo without reaching for `any`.
-interface MutableReadline {
-  _writeToOutput(stringToWrite: string): void;
-}
-
 /**
  * Ask for a secret without echoing keystrokes (sudo-style: nothing is shown).
  * The answer is returned verbatim — secrets are not trimmed. Aborts on EOF.
  */
-export function promptSecret(question: string): Promise<string> {
+export function promptSecret(question) {
   const rl = createInterface({ input: process.stdin, output: process.stderr, terminal: true });
   let answered = false;
   let muted = false;
-  (rl as unknown as MutableReadline)._writeToOutput = (stringToWrite) => {
+  rl._writeToOutput = (stringToWrite) => {
     if (!muted) process.stderr.write(stringToWrite);
   };
-  return new Promise<string>((resolve) => {
+  return new Promise((resolve) => {
     rl.on("close", () => {
       if (!answered) onAbort();
     });
@@ -55,22 +46,8 @@ export function promptSecret(question: string): Promise<string> {
     muted = true;
   });
 }
-
-// --- Single-select menu (arrow keys) -----------------------------------------
-
-export interface SelectOption<T> {
-  value: T;
-  label: string;
-  hint?: string;
-}
-
-interface KeypressInfo {
-  name?: string;
-  ctrl?: boolean;
-}
-
 /** Numbered fallback for non-TTY input (pipes, CI): read a line, parse a number. */
-async function selectFallback<T>(title: string, options: SelectOption<T>[]): Promise<T> {
+async function selectFallback(title, options) {
   const list = options
     .map((o, i) => `  ${i + 1}) ${o.label}${o.hint ? `  — ${o.hint}` : ""}`)
     .join("\n");
@@ -78,25 +55,22 @@ async function selectFallback<T>(title: string, options: SelectOption<T>[]): Pro
   for (;;) {
     const raw = (await prompt("Choice [1]: ")) || "1";
     const n = Number(raw);
-    if (Number.isInteger(n) && n >= 1 && n <= options.length) return options[n - 1]!.value;
+    if (Number.isInteger(n) && n >= 1 && n <= options.length) return options[n - 1].value;
     process.stderr.write(`  Enter a number between 1 and ${options.length}.\n`);
   }
 }
-
 /**
  * Interactive single-select: ↑/↓ (or k/j) to move, digits to jump, Enter to
  * confirm, Ctrl-C / Esc / q to abort. Renders to stderr; falls back to a numbered
  * prompt when stdin/stderr is not a TTY. Resolves with the chosen option's value.
  */
-export function select<T>(title: string, options: SelectOption<T>[]): Promise<T> {
+export function select(title, options) {
   const out = process.stderr;
   const stdin = process.stdin;
   if (!stdin.isTTY || !out.isTTY) return selectFallback(title, options);
-
   emitKeypressEvents(stdin);
   let index = 0;
-
-  const render = (first: boolean): void => {
+  const render = (first) => {
     if (!first) out.write(`\x1b[${options.length + 1}A`); // back to the title line
     out.write("\x1b[0J"); // clear from here down
     out.write(`${title}\n`);
@@ -108,15 +82,14 @@ export function select<T>(title: string, options: SelectOption<T>[]): Promise<T>
       out.write(`${pointer} ${label}${hint}\n`);
     }
   };
-
-  return new Promise<T>((resolve) => {
-    const cleanup = (): void => {
+  return new Promise((resolve) => {
+    const cleanup = () => {
       stdin.removeListener("keypress", onKey);
       if (stdin.isTTY) stdin.setRawMode(false);
       stdin.pause();
       out.write("\x1b[?25h\n"); // restore cursor + drop below the menu
     };
-    const onKey = (str: string | undefined, key: KeypressInfo): void => {
+    const onKey = (str, key) => {
       const name = key?.name ?? "";
       if (key?.ctrl && name === "c") {
         cleanup();
@@ -132,13 +105,12 @@ export function select<T>(title: string, options: SelectOption<T>[]): Promise<T>
         render(false);
       } else if (name === "return" || name === "enter") {
         cleanup();
-        resolve(options[index]!.value);
+        resolve(options[index].value);
       } else if (name === "escape" || name === "q") {
         cleanup();
         onAbort();
       }
     };
-
     out.write("\x1b[?25l"); // hide cursor while navigating
     render(true);
     stdin.setRawMode(true);
