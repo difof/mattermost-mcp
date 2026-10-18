@@ -1,16 +1,9 @@
 import { describe, it, expect } from "vitest";
 import mattermost from "@mattermost/client";
 import { formatMattermostError, isMattermostError } from "./errors.js";
-
-function clientError(data: {
-  message: string;
-  status_code?: number;
-  server_error_id?: string;
-  detailed_error?: string;
-}): InstanceType<typeof mattermost.ClientError> {
+function clientError(data) {
   return new mattermost.ClientError("https://mm.example.com", data);
 }
-
 describe("formatMattermostError", () => {
   it("renders status + message verbatim", () => {
     expect(formatMattermostError(clientError({ message: "Forbidden", status_code: 403 }))).toBe(
@@ -49,7 +42,6 @@ describe("formatMattermostError", () => {
     expect(formatMattermostError("nope")).toBe("nope");
   });
 });
-
 describe("isMattermostError", () => {
   it("is true for a ClientError", () => {
     expect(isMattermostError(clientError({ message: "x", status_code: 500 }))).toBe(true);
