@@ -1,10 +1,7 @@
 import { z } from "zod";
 import { doClientFetch } from "../mattermost/client.js";
-import { defineTool, type AnyToolDef } from "./registry.js";
-
 // ── 1. list_teams ────────────────────────────────────────────────────────────
-
-const listTeams = defineTool({
+const listTeams = {
   name: "list_teams",
   title: "List my teams",
   description:
@@ -12,11 +9,9 @@ const listTeams = defineTool({
   inputSchema: z.object({}),
   resultScope: "teams",
   handler: (_args, { session }) => session.call((c) => c.getMyTeams()),
-});
-
+};
 // ── 2. list_channels ─────────────────────────────────────────────────────────
-
-const listChannels = defineTool({
+const listChannels = {
   name: "list_channels",
   title: "List my channels",
   description:
@@ -27,11 +22,9 @@ const listChannels = defineTool({
   resources: (args) => ({ teamId: args.team_id }),
   resultScope: "channels",
   handler: (args, { session }) => session.call((c) => c.getMyChannels(args.team_id)),
-});
-
+};
 // ── 3. get_channel ───────────────────────────────────────────────────────────
-
-const getChannel = defineTool({
+const getChannel = {
   name: "get_channel",
   title: "Get channel",
   description: "Return a single channel by ID (GET /channels/{id}).",
@@ -40,11 +33,9 @@ const getChannel = defineTool({
   }),
   resources: (args) => ({ channelId: args.channel_id }),
   handler: (args, { session }) => session.call((c) => c.getChannel(args.channel_id)),
-});
-
+};
 // ── 4. create_channel ────────────────────────────────────────────────────────
-
-const createChannel = defineTool({
+const createChannel = {
   name: "create_channel",
   title: "Create channel",
   description: "Create a new channel in a team (POST /channels).",
@@ -65,11 +56,9 @@ const createChannel = defineTool({
         team_id: args.team_id,
       }),
     ),
-});
-
+};
 // ── 5. join_channel ──────────────────────────────────────────────────────────
-
-const joinChannel = defineTool({
+const joinChannel = {
   name: "join_channel",
   title: "Join channel",
   description: "Add the authenticated user to a channel (POST /channels/{id}/members).",
@@ -80,11 +69,9 @@ const joinChannel = defineTool({
   resources: (args) => ({ channelId: args.channel_id }),
   handler: (args, { session }) =>
     session.call((c) => c.addToChannel(session.userId, args.channel_id)),
-});
-
+};
 // ── 6. leave_channel ─────────────────────────────────────────────────────────
-
-const leaveChannel = defineTool({
+const leaveChannel = {
   name: "leave_channel",
   title: "Leave channel",
   description:
@@ -96,11 +83,9 @@ const leaveChannel = defineTool({
   resources: (args) => ({ channelId: args.channel_id }),
   handler: (args, { session }) =>
     session.call((c) => c.removeFromChannel(session.userId, args.channel_id)),
-});
-
+};
 // ── 7. archive_channel ───────────────────────────────────────────────────────
-
-const archiveChannel = defineTool({
+const archiveChannel = {
   name: "archive_channel",
   title: "Archive channel",
   description: "Soft-delete (archive) a channel (DELETE /channels/{id}).",
@@ -111,11 +96,9 @@ const archiveChannel = defineTool({
   destructive: true,
   resources: (args) => ({ channelId: args.channel_id }),
   handler: (args, { session }) => session.call((c) => c.deleteChannel(args.channel_id)),
-});
-
+};
 // ── 8. list_channel_members ──────────────────────────────────────────────────
-
-const listChannelMembers = defineTool({
+const listChannelMembers = {
   name: "list_channel_members",
   title: "List channel members",
   description: "Return a page of members for a channel (GET /channels/{id}/members).",
@@ -133,11 +116,9 @@ const listChannelMembers = defineTool({
   resources: (args) => ({ channelId: args.channel_id }),
   handler: (args, { session }) =>
     session.call((c) => c.getChannelMembers(args.channel_id, args.page, args.per_page)),
-});
-
+};
 // ── 9. add_member ────────────────────────────────────────────────────────────
-
-const addMember = defineTool({
+const addMember = {
   name: "add_member",
   title: "Add member to channel",
   description: "Add a user to a channel (POST /channels/{id}/members).",
@@ -149,11 +130,9 @@ const addMember = defineTool({
   resources: (args) => ({ channelId: args.channel_id }),
   handler: (args, { session }) =>
     session.call((c) => c.addToChannel(args.user_id, args.channel_id)),
-});
-
+};
 // ── 10. remove_member ────────────────────────────────────────────────────────
-
-const removeMember = defineTool({
+const removeMember = {
   name: "remove_member",
   title: "Remove member from channel",
   description: "Remove a user from a channel (DELETE /channels/{id}/members/{uid}).",
@@ -166,11 +145,9 @@ const removeMember = defineTool({
   resources: (args) => ({ channelId: args.channel_id }),
   handler: (args, { session }) =>
     session.call((c) => c.removeFromChannel(args.user_id, args.channel_id)),
-});
-
+};
 // ── 11. get_unreads ──────────────────────────────────────────────────────────
-
-const getUnreads = defineTool({
+const getUnreads = {
   name: "get_unreads",
   title: "Get channel unreads",
   description:
@@ -192,7 +169,7 @@ const getUnreads = defineTool({
       // for actual unread counts; Client4 11.6 has no dedicated method for it.
       // https://docs.mattermost.com/api/reference/get-channel-unread
       const unread = await session.call((c) =>
-        doClientFetch<{ channel_id: string; msg_count: number; mention_count: number }>(
+        doClientFetch(
           c,
           `${c.getUserRoute("me")}/channels/${encodeURIComponent(membership.channel_id)}/unread`,
           { method: "get" },
@@ -206,11 +183,9 @@ const getUnreads = defineTool({
     }
     return unreads;
   },
-});
-
+};
 // ── 12. mark_channel_read ────────────────────────────────────────────────────
-
-const markChannelRead = defineTool({
+const markChannelRead = {
   name: "mark_channel_read",
   title: "Mark channel as read",
   description:
@@ -221,11 +196,9 @@ const markChannelRead = defineTool({
   write: true,
   resources: (args) => ({ channelId: args.channel_id }),
   handler: (args, { session }) => session.call((c) => c.viewMyChannel(args.channel_id)),
-});
-
+};
 // ── Export ───────────────────────────────────────────────────────────────────
-
-export const channelTools: AnyToolDef[] = [
+export const channelTools = [
   listTeams,
   listChannels,
   getChannel,
