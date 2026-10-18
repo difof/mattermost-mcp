@@ -9,21 +9,23 @@ import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { z } from "zod";
 import { configDir } from "../paths.js";
 import { log } from "../log.js";
-const USER_AGENT = "mattermost-mcp/0.1.0";
+import { writePrivateJson } from "../private-json.js";
+import { DEFAULT_RESILIENCE, OAuthRedirectSchema } from "../config.js";
+import { VERSION } from "../version.js";
+import { readBounded } from "./http-response.js";
+const USER_AGENT = `mattermost-mcp/${VERSION}`;
+const TOKEN_RESPONSE_MAX_BYTES = 1024 * 1024;
 const CONSENT_TIMEOUT_MS = 300_000; // 5 min for the user to log in + consent
 const EXPIRY_MARGIN_MS = 60_000; // treat a token as expired 60s early
 // --- PKCE --------------------------------------------------------------------
-function base64url(buf) {
-  return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
 /** Fresh PKCE pair: 43-char base64url verifier + its S256 challenge. */
 export function pkcePair() {
-  const verifier = base64url(randomBytes(32));
-  const challenge = base64url(createHash("sha256").update(verifier).digest());
+  const verifier = randomBytes(32).toString("base64url");
+  const challenge = createHash("sha256").update(verifier).digest("base64url");
   return { verifier, challenge };
 }
 // --- Authorize URL -----------------------------------------------------------
@@ -56,7 +58,7 @@ export function parseTokenResponse(json, now) {
     ...(r.expires_in != null ? { expiresAt: now + r.expires_in * 1000 } : {}),
   };
 }
-async function postToken(url, body, now) {
+async function postToken(url, body, timeoutMs) {
   const res = await fetch(`${url}/oauth/access_token`, {
     method: "POST",
     headers: {
@@ -65,15 +67,33 @@ async function postToken(url, body, now) {
       "User-Agent": USER_AGENT,
     },
     body: body.toString(),
+    redirect: "manual",
+    ...(timeoutMs > 0 ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
   });
-  const text = await res.text();
+  if (res.status >= 300 && res.status < 400) {
+    await res.body?.cancel().catch(() => {});
+    throw new Error(`OAuth token endpoint ${res.status}: redirects are not allowed`);
+  }
+  let text;
+  try {
+    const bytes = await readBounded(
+      res,
+      TOKEN_RESPONSE_MAX_BYTES,
+      `OAuth token response exceeds ${TOKEN_RESPONSE_MAX_BYTES} bytes`,
+    );
+    // Match Fetch's UTF-8 text decoding, including stripping a leading BOM.
+    text = new TextDecoder().decode(bytes);
+  } catch (error) {
+    if (!res.ok) throw new Error(`OAuth token endpoint ${res.status}: ${error.message}`);
+    throw error;
+  }
   if (!res.ok) {
     // Surface the server response verbatim (status + body).
     throw new Error(`OAuth token endpoint ${res.status}: ${text}`);
   }
-  return parseTokenResponse(JSON.parse(text), now);
+  return parseTokenResponse(JSON.parse(text), Date.now());
 }
-function exchangeCode(url, auth, code, verifier, now) {
+function exchangeCode(url, auth, code, verifier, timeoutMs) {
   return postToken(
     url,
     new URLSearchParams({
@@ -84,10 +104,10 @@ function exchangeCode(url, auth, code, verifier, now) {
       redirect_uri: auth.redirect,
       code_verifier: verifier,
     }),
-    now,
+    timeoutMs,
   );
 }
-function refresh(url, auth, refreshToken, now) {
+function refresh(url, auth, refreshToken, timeoutMs) {
   return postToken(
     url,
     new URLSearchParams({
@@ -96,7 +116,7 @@ function refresh(url, auth, refreshToken, now) {
       client_id: auth.clientId,
       client_secret: auth.clientSecret,
     }),
-    now,
+    timeoutMs,
   );
 }
 // --- Token cache (OS config dir, 0600) ---------------------------------------
@@ -120,9 +140,7 @@ export function readTokenCache(file) {
   }
 }
 export function writeTokenCache(file, tokens) {
-  mkdirSync(join(file, ".."), { recursive: true });
-  // 0600: the file holds access + refresh tokens.
-  writeFileSync(file, JSON.stringify(tokens, null, 2), { mode: 0o600 });
+  writePrivateJson(file, CachedTokensSchema.parse(tokens));
 }
 /** True when the token is absent of expiry-safety, i.e. expired (or within margin). */
 export function isTokenExpired(tokens, now) {
@@ -142,9 +160,10 @@ function openBrowser(url) {
   }
 }
 /** Start a loopback server on the redirect URI and resolve with the auth `code`. */
-function waitForCode(redirect, expectedState) {
-  const target = new URL(redirect);
+export function waitForCode(redirect, expectedState) {
+  const target = new URL(OAuthRedirectSchema.parse(redirect));
   const port = Number(target.port || "80");
+  const host = target.hostname === "[::1]" ? "::1" : target.hostname;
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => {
       const reqUrl = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
@@ -187,11 +206,11 @@ function waitForCode(redirect, expectedState) {
       finish();
       reject(err);
     });
-    server.listen(port, "127.0.0.1");
+    server.listen(port, host);
   });
 }
-async function interactiveConsent(url, auth, now) {
-  const state = base64url(randomBytes(16));
+async function interactiveConsent(url, auth, timeoutMs) {
+  const state = randomBytes(16).toString("base64url");
   const { verifier, challenge } = pkcePair();
   const authorizeUrl = buildAuthorizeUrl(url, auth.clientId, auth.redirect, state, challenge);
   // Listen BEFORE opening the browser so the redirect is never missed.
@@ -199,14 +218,14 @@ async function interactiveConsent(url, auth, now) {
   log(`oauth2 consent required — open this URL in your browser:\n${authorizeUrl}`);
   openBrowser(authorizeUrl);
   const code = await codePromise;
-  return exchangeCode(url, auth, code, verifier, now);
+  return exchangeCode(url, auth, code, verifier, timeoutMs);
 }
 // --- Public API --------------------------------------------------------------
 /**
  * Obtain a usable access token: cache-first, refresh if expired, else run the
  * interactive consent flow. Persists the result to the token cache.
  */
-export async function acquireOAuthToken(url, auth) {
+export async function acquireOAuthToken(url, auth, timeoutMs = DEFAULT_RESILIENCE.timeoutMs) {
   const file = tokenCacheFile(url, auth.clientId);
   const cached = readTokenCache(file);
   if (cached && !isTokenExpired(cached, Date.now())) {
@@ -214,22 +233,27 @@ export async function acquireOAuthToken(url, auth) {
   }
   if (cached?.refreshToken) {
     try {
-      const refreshed = await refreshOAuthToken(url, auth, cached);
+      const refreshed = await refreshOAuthToken(url, auth, cached, timeoutMs);
       log("oauth2 access token refreshed from cache");
       return refreshed;
     } catch (err) {
       log(`oauth2 refresh failed (${errMsg(err)}) — falling back to interactive consent`);
     }
   }
-  const tokens = await interactiveConsent(url, auth, Date.now());
+  const tokens = await interactiveConsent(url, auth, timeoutMs);
   writeTokenCache(file, tokens);
   log("oauth2 consent complete — token cached");
   return tokens;
 }
 /** Refresh an access token and persist the result. Throws if no refresh token. */
-export async function refreshOAuthToken(url, auth, current) {
+export async function refreshOAuthToken(
+  url,
+  auth,
+  current,
+  timeoutMs = DEFAULT_RESILIENCE.timeoutMs,
+) {
   if (!current.refreshToken) throw new Error("no refresh token available");
-  const refreshed = await refresh(url, auth, current.refreshToken, Date.now());
+  const refreshed = await refresh(url, auth, current.refreshToken, timeoutMs);
   // Mattermost may not rotate the refresh token — keep the previous one if absent.
   const merged = {
     ...refreshed,
