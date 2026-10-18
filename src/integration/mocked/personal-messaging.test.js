@@ -1,15 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { ME, PEER, OK, useMattermost } from "./mattermost-http-fixture.js";
-
 const THREAD_FLAGS = {
   skipFetchThreads: false,
   collapsedThreads: false,
   collapsedThreadsExtended: false,
 };
-
 describe("personal messaging through MCP and the Mattermost HTTP API", () => {
   const fixture = useMattermost({ guardrails: { allowDestructive: true } });
-
   it("advertises all 37 tools with schemas and accurate write/destructive hints", async () => {
     const { tools } = await fixture().listTools();
     const readTools = [
@@ -63,10 +60,9 @@ describe("personal messaging through MCP and the Mattermost HTTP API", () => {
         ["api_call", "delete_post", "archive_channel", "remove_member"].includes(tool.name),
       );
     }
-    const dm = tools.find(({ name }) => name === "send_dm")!;
+    const dm = tools.find(({ name }) => name === "send_dm");
     expect(dm.inputSchema.required).toEqual(["user_ids", "message"]);
   });
-
   it("identifies the PAT owner, resolves colleagues, and updates the owner's presence", async () => {
     const mm = fixture();
     mm.expect("GET", "/users/me", { reply: ME });
@@ -79,7 +75,6 @@ describe("personal messaging through MCP and the Mattermost HTTP API", () => {
     expect(await mm.call("search_users", { term: "rob" })).toEqual([PEER]);
     mm.expect("POST", "/users/search", { body: { term: "nobody" }, reply: [] });
     expect(await mm.call("search_users", { term: "nobody" })).toEqual([]);
-
     const presence = { user_id: PEER.id, status: "online", manual: false, last_activity_at: 100 };
     mm.expect("GET", `/users/${PEER.id}/status`, { reply: presence });
     expect(await mm.call("get_user_status", { user_id: PEER.id })).toEqual(presence);
@@ -90,7 +85,7 @@ describe("personal messaging through MCP and the Mattermost HTTP API", () => {
     const offsetExpiry = new Date(Date.now() + 3 * 60 * 60 * 1000)
       .toISOString()
       .replace("Z", "+02:00");
-    const expirations: { duration?: string; expires_at?: string }[] = [
+    const expirations = [
       {},
       { duration: "today", expires_at: expiresAt },
       { duration: "", expires_at: offsetExpiry },
@@ -104,13 +99,12 @@ describe("personal messaging through MCP and the Mattermost HTTP API", () => {
       expect(await mm.call("set_custom_status", custom)).toEqual(OK);
     }
   });
-
   it("opens an existing DM or a group with raw participant arrays and sends as the PAT owner", async () => {
     const mm = fixture();
     for (const [kind, recipients] of [
       ["direct", [PEER.id]],
       ["group", [PEER.id, "another-colleague"]],
-    ] as const) {
+    ]) {
       const channel = { id: `${kind}-channel`, type: kind === "direct" ? "D" : "G", team_id: "" };
       const message = `Hello ${kind}`;
       const post = { id: `${kind}-post`, channel_id: channel.id, user_id: ME.id, message };
@@ -130,7 +124,6 @@ describe("personal messaging through MCP and the Mattermost HTTP API", () => {
       expect(await mm.call("get_channel_posts", { channel_id: channel.id })).toEqual(history);
     }
   });
-
   it("posts, reads, replies, edits, searches, reacts, and deletes without losing post fields", async () => {
     const mm = fixture();
     const args = {
@@ -140,7 +133,7 @@ describe("personal messaging through MCP and the Mattermost HTTP API", () => {
     };
     const root = { ...args, id: "root-post", user_id: ME.id, create_at: 1000 };
     mm.expect("POST", "/posts", { body: args, reply: root });
-    const posted = await mm.call<typeof root>("post_message", args);
+    const posted = await mm.call("post_message", args);
     expect(posted).toEqual(root);
     mm.expect("GET", `/posts/${posted.id}`, { reply: root });
     expect(await mm.call("get_post", { post_id: posted.id })).toEqual(root);
@@ -148,7 +141,6 @@ describe("personal messaging through MCP and the Mattermost HTTP API", () => {
     const reply = { ...replyArgs, id: "reply-post", user_id: ME.id };
     mm.expect("POST", "/posts", { body: replyArgs, reply });
     expect(await mm.call("reply_thread", replyArgs)).toEqual(reply);
-
     const edited = { ...root, message: "Final plan", edit_at: 2000 };
     mm.expect("PUT", `/posts/${posted.id}/patch`, {
       body: { id: posted.id, message: edited.message },
@@ -191,7 +183,6 @@ describe("personal messaging through MCP and the Mattermost HTTP API", () => {
     mm.expect("DELETE", `/posts/${posted.id}`);
     expect(await mm.call("delete_post", { post_id: posted.id, confirm: true })).toEqual(OK);
   });
-
   it("retrieves an entire thread beyond the SDK's usual 60-post page", async () => {
     const mm = fixture();
     const posts = Object.fromEntries(
@@ -212,12 +203,7 @@ describe("personal messaging through MCP and the Mattermost HTTP API", () => {
     });
     expect(await mm.call("get_thread", { post_id: "thread-post-0" })).toEqual(thread);
   });
-
-  it.each<{
-    name: string;
-    args: Record<string, unknown>;
-    query: Record<string, string | number | boolean>;
-  }>([
+  it.each([
     { name: "default page", args: {}, query: { page: 0, per_page: 60 } },
     { name: "explicit page", args: { page: 2, per_page: 25 }, query: { page: 2, per_page: 25 } },
     {
