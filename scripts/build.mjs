@@ -1,13 +1,17 @@
-import { cpSync, mkdirSync, rmSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { chmodSync, cpSync, rmSync } from "node:fs";
+import { relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const root = fileURLToPath(new URL("../", import.meta.url));
+const source = fileURLToPath(new URL("../src/", import.meta.url));
 const output = new URL("../dist/", import.meta.url);
 rmSync(output, { recursive: true, force: true });
-execFileSync(process.execPath, ["node_modules/typescript/bin/tsc"], {
-  cwd: root,
-  stdio: "inherit",
+cpSync(source, output, {
+  recursive: true,
+  filter(path) {
+    const name = relative(source, path);
+    return (
+      name !== "integration" && !name.startsWith(`integration${sep}`) && !name.endsWith(".test.js")
+    );
+  },
 });
-mkdirSync(new URL("api/", output), { recursive: true });
-cpSync(new URL("../src/api/catalog.json", import.meta.url), new URL("api/catalog.json", output));
+chmodSync(new URL("index.js", output), 0o755);
