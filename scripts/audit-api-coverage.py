@@ -20,6 +20,10 @@ VERSION = "11.11.1"
 COMMIT = "3acb3a7f684d11ccfcec4e5bd11c79f64e3eabf9"
 REPOSITORY = "https://github.com/mattermost/mattermost"
 SOURCE_DIRS = ("api/v4/source", "server/channels/api4")
+# Digest of the 149 immutable source hashes authenticated by GitHub's Git blob
+# IDs on the initial audit. This permits reproducible offline cache checks
+# without trusting a changed inventory to supply its own expected hashes.
+SOURCE_MANIFEST_SHA256 = "8dbfb570a95d5c03da3955c97be532423ed92bc60118f503fc2f11ef12a7d73c"
 METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE"}
 REPO_ROOT = Path(__file__).resolve().parents[1]
 GO_STRING = r'(?:"(?:[^"\\]|\\.)*"|`[^`]*`)'
@@ -123,6 +127,19 @@ def checkout_source(source: Path) -> dict[str, bytes]:
         for name in files
         if name.endswith(".yaml") or (name.endswith(".go") and not name.endswith("_test.go"))
     }
+
+
+def cached_source(cache: Path) -> dict[str, bytes]:
+    metadata = json.loads((REPO_ROOT / "docs/api-coverage.json").read_text())["source"]
+    manifest = metadata["source_sha256"]
+    encoded = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+    if metadata["commit"] != COMMIT or digest(encoded) != SOURCE_MANIFEST_SHA256:
+        raise ValueError("Cached source manifest differs from the pinned, authenticated audit")
+    files = {name: (cache / name).read_bytes() for name in manifest}
+    for name, data in files.items():
+        if digest(data) != manifest[name]:
+            raise ValueError(f"Cached source hash mismatch: {name}")
+    return files
 
 
 def route_key(method: str, path: str) -> str:
@@ -281,12 +298,28 @@ def build_inventory(files: dict[str, bytes]) -> dict:
             if key not in routes or "server" not in routes[key] or "openapi" not in routes[key]:
                 raise ValueError(f"Covered route is not documented and registered: {tool}: {key}")
             routes[key].setdefault("mcp_tools", []).append(tool)
+    convenience_covered = sum("mcp_tools" in record for record in routes.values())
+    api_file = "src/tools/api.js"
+    api_names = re.findall(r'\bname:\s*"([a-z_]+)"', (REPO_ROOT / api_file).read_text())
+    if sorted(api_names) != ["api_call", "api_describe", "api_search"]:
+        raise ValueError("Generic API tools changed: review their coverage before updating the audit")
+    tool_files.append(api_file)
+    callable_routes = sorted(
+        key for key, record in routes.items()
+        if "server" in record and record["auth_wrapper"] not in {"CloudAPIKeyRequired", "RemoteClusterTokenRequired"}
+    )
+    for key in callable_routes:
+        routes[key].setdefault("mcp_tools", []).append("api_call")
     for record in routes.values():
         if "mcp_tools" in record:
             record["mcp_tools"].sort()
 
     counts = {
-        "mcp_tools": len(TOOL_ROUTES),
+        "mcp_tools": len(TOOL_ROUTES) + len(api_names),
+        "convenience_tools": len(TOOL_ROUTES),
+        "convenience_covered_routes": convenience_covered,
+        "generic_callable_routes": len(callable_routes),
+        "special_auth_http_routes": len(server) - len(callable_routes),
         "covered_routes": sum("mcp_tools" in record for record in routes.values()),
         "documented_operations_all_paths": len(docs),
         "documented_v4_operations": len(docs_v4),
@@ -299,7 +332,7 @@ def build_inventory(files: dict[str, bytes]) -> dict:
         "inventory_union": len(routes),
     }
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "source": {
             "mattermost_version": VERSION,
             "tag": f"v{VERSION}",
@@ -314,7 +347,7 @@ def build_inventory(files: dict[str, bytes]) -> dict:
             "included": "Documented /api/v4 REST operations plus literal core api4 HTTP route registrations, including conditional registrations. Five documented local-only operations are retained and labeled for comparison, not counted as registered HTTP endpoints.",
             "excluded": "Local socket routes, /api/v5, plugin-defined APIs, WebSocket operations, root endpoints, and catch-all 404 handlers.",
             "permission_metadata": "Lexical references only, not an evaluated permission policy. Empty/missing lists do not mean unrestricted access. Handler helpers, app logic, account roles, membership, licenses and configuration remain authoritative.",
-            "coverage": "At least one current MCP tool invokes this method/path. Not full input, response, permission, server-version or live integration coverage.",
+            "coverage": "Convenience tools cover 33 method/path pairs; api_call dispatches every session/public core HTTP operation through a pinned catalog. api_search and api_describe are local discovery only. Special cloud/remote-cluster authentication and local-socket operations are catalogued but cannot use the configured account credential. Coverage is transport exposure, not a claim that every PAT has the required account permissions, license, features, input variants or live compatibility.",
         },
         "mcp_source_sha256": {name: digest((REPO_ROOT / name).read_bytes()) for name in tool_files},
         "counts": counts,
@@ -322,7 +355,7 @@ def build_inventory(files: dict[str, bytes]) -> dict:
             wrapper: sum(record["auth_wrapper"] == wrapper for record in server.values())
             for wrapper in sorted({record["auth_wrapper"] for record in server.values()})
         },
-        "tool_routes": dict(sorted(TOOL_ROUTES.items())),
+        "tool_routes": dict(sorted({**TOOL_ROUTES, "api_call": callable_routes, "api_search": [], "api_describe": []}.items())),
         "routes": dict(sorted(routes.items())),
         "documented_excluded": {key: value for key, value in docs.items() if key not in docs_rest},
         "registered_excluded": sorted(excluded, key=lambda record: record["route"]),
@@ -334,11 +367,12 @@ def main() -> None:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--source", type=Path, help=f"Clean Mattermost checkout at {COMMIT}")
     mode.add_argument("--download", action="store_true", help="Read public source at the immutable commit")
+    mode.add_argument("--cached-source", type=Path, help="Offline source cache checked against the pinned hash manifest")
     parser.add_argument("--cache", type=Path, default=Path("/tmp/mattermost-v11-api-audit"))
     parser.add_argument("--output", type=Path, default=REPO_ROOT / "docs/api-coverage.json")
     parser.add_argument("--check", action="store_true", help="Compare with output without overwriting it")
     args = parser.parse_args()
-    files = checkout_source(args.source) if args.source else download_source(args.cache)
+    files = checkout_source(args.source) if args.source else cached_source(args.cached_source) if args.cached_source else download_source(args.cache)
     inventory = build_inventory(files)
     if args.check:
         if json.loads(args.output.read_text()) != inventory:
