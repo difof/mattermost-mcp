@@ -7,6 +7,23 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
+    files: ["src/**/*.js", "scripts/**/*.mjs"],
+    languageOptions: {
+      globals: {
+        fetch: "readonly",
+        FormData: "readonly",
+        Headers: "readonly",
+        URL: "readonly",
+        TextDecoder: "readonly",
+        AbortSignal: "readonly",
+        Buffer: "readonly",
+        process: "readonly",
+        setTimeout: "readonly",
+        clearTimeout: "readonly",
+      },
+    },
+  },
+  {
     rules: {
       "@typescript-eslint/no-unused-vars": [
         "error",
