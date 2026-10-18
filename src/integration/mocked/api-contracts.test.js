@@ -1,6 +1,6 @@
 import { Blob } from "node:buffer";
 import { gzipSync } from "node:zlib";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { useMattermost } from "./mattermost-http-fixture.js";
 
 // Curated wire contracts, independent of the generated catalog/schema sampler.
@@ -20,6 +20,48 @@ describe("generic API payload and response contracts through MCP and HTTP", () =
   const fixture = useMattermost({
     user: { id: USER, username: "casey" },
     guardrails: { allowDestructive: true },
+  });
+
+  it("rejects malformed headers before starting or retrying a request", async () => {
+    const mm = fixture();
+    const fetch = vi.mocked(globalThis.fetch);
+    const attempts = fetch.mock.calls.length;
+    for (const invalid of [
+      { headers: { Accept: "application/json\r\nX-Injected: value" } },
+      { content_type: "application/json;\r\nX-Injected: value" },
+    ]) {
+      const error = await mm.error("api_call", {
+        operation: "POST /api/v4/users/ids",
+        body: [],
+        ...invalid,
+      });
+      expect(error).toMatch(/header/i);
+    }
+    expect(fetch).toHaveBeenCalledTimes(attempts);
+  });
+
+  it("decodes a JSON BOM while preserving explicitly requested text and bytes", async () => {
+    const mm = fixture();
+    const value = { id: USER };
+    const text = `\uFEFF${JSON.stringify(value)}`;
+    const bytes = Buffer.from(text);
+    for (const [response_format, expected] of [
+      ["auto", { data: value }],
+      ["text", { data: text }],
+      ["base64", { body_base64: bytes.toString("base64"), bytes: bytes.length }],
+    ]) {
+      mm.expect("GET", `/users/${USER}`, {
+        bytes,
+        headers: { "Content-Type": "application/json" },
+      });
+      expect(
+        await mm.call("api_call", {
+          operation: "GET /api/v4/users/{user_id}",
+          path: { user_id: USER },
+          response_format,
+        }),
+      ).toMatchObject(expected);
+    }
   });
 
   it("sends direct/group arrays and preserves rich JSON posts and bulk-list responses", async () => {
