@@ -3,66 +3,30 @@
 // unexpected requests, missing requests, wrong credentials, and outside origins fail.
 // These are transport contracts, not an emulation of server permission checks.
 import assert from "node:assert/strict";
-import { createServer, type IncomingHttpHeaders, type IncomingMessage } from "node:http";
-import type { AddressInfo } from "node:net";
+import { createServer } from "node:http";
 import { afterEach, beforeEach, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
-import type { GuardrailConfig } from "../../config.js";
 import { createSession } from "../../mattermost/client.js";
-import type { ResilienceConfig } from "../../mattermost/resilience.js";
 import { allTools } from "../../tools/index.js";
 import { registerTools } from "../../tools/registry.js";
-
 export const ME = { id: "personal-user", username: "casey" };
 export const PEER = { id: "colleague-user", username: "robin" };
 export const OK = { status: "OK" };
 const TOKEN = "test-only-personal-pat";
 const DEPLOYMENT_PATH = "/mattermost";
-
-type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
-type QueryValue = string | number | boolean;
-type Query = Record<string, QueryValue | QueryValue[]>;
-
-interface Exchange {
-  query?: Query;
-  body?: unknown;
-  inspectBody?: (bytes: Buffer, headers: IncomingHttpHeaders) => void | Promise<void>;
-  requestHeaders?: Record<string, string | undefined>;
-  fetchRedirect?: RequestInit["redirect"];
-  reply?: unknown;
-  status?: number;
-  headers?: Record<string, string>;
-  bytes?: Buffer;
-  chunked?: boolean;
-  empty?: boolean;
-}
-
-interface ExpectedRequest extends Exchange {
-  method: Method;
-  path: string;
-}
-
-interface FixtureOptions {
-  user?: typeof ME;
-  guardrails?: Partial<GuardrailConfig>;
-  resilience?: Partial<ResilienceConfig>;
-}
-
-async function readBody(request: IncomingMessage): Promise<Buffer> {
-  const chunks: Buffer[] = [];
+async function readBody(request) {
+  const chunks = [];
   for await (const chunk of request) chunks.push(Buffer.from(chunk));
   return Buffer.concat(chunks);
 }
-
 export class MattermostHttpFixture {
-  readonly guardrails: GuardrailConfig;
   url = "";
-  private readonly expected: ExpectedRequest[] = [];
-  private readonly failures: string[] = [];
-  private readonly http = createServer((request, response) => {
+  expected = [];
+  failures = [];
+  http = createServer((request, response) => {
     void this.respond(request).then(
       ({ expectation, bytes }) => {
         response.writeHead(expectation.status ?? 200, {
@@ -73,7 +37,7 @@ export class MattermostHttpFixture {
         if (expectation.chunked) response.write(bytes);
         response.end(expectation.chunked ? undefined : bytes);
       },
-      (error: unknown) => {
+      (error) => {
         this.failures.push(error instanceof Error ? error.message : String(error));
         // A non-retryable response makes a contract failure immediate and readable.
         response.writeHead(418, { "Content-Type": "application/json" });
@@ -83,12 +47,8 @@ export class MattermostHttpFixture {
       },
     );
   });
-  private mcp?: Client;
-  private server?: Server;
-  private restoreFetch?: () => void;
-  private restoreLog?: () => void;
-
-  constructor(private readonly options: FixtureOptions) {
+  constructor(options) {
+    this.options = options;
     this.guardrails = {
       readOnly: false,
       allowDestructive: false,
@@ -98,17 +58,15 @@ export class MattermostHttpFixture {
       ...options.guardrails,
     };
   }
-
-  expect(method: Method, path: string, exchange: Exchange = {}): void {
+  expect(method, path, exchange = {}) {
     this.expected.push({ method, path, ...exchange });
   }
-
-  private async respond(request: IncomingMessage) {
+  async respond(request) {
     const received = `${request.method} ${request.url}`;
     const expectation = this.expected.shift();
     assert.ok(expectation, `Unplanned HTTP request: ${received}`);
     assert.equal(request.method, expectation.method, received);
-    const url = new URL(request.url!, "http://fixture.invalid");
+    const url = new URL(request.url, "http://fixture.invalid");
     assert.equal(url.pathname, `${DEPLOYMENT_PATH}/api/v4${expectation.path}`, received);
     assert.deepEqual(
       [...url.searchParams.entries()].sort(),
@@ -144,13 +102,12 @@ export class MattermostHttpFixture {
         Buffer.from(JSON.stringify(Object.hasOwn(expectation, "reply") ? expectation.reply : OK)));
     return { expectation, bytes };
   }
-
-  async start(): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
+  async start() {
+    await new Promise((resolve, reject) => {
       this.http.once("error", reject);
       this.http.listen(0, "127.0.0.1", resolve);
     });
-    const origin = `http://127.0.0.1:${(this.http.address() as AddressInfo).port}`;
+    const origin = `http://127.0.0.1:${this.http.address().port}`;
     this.url = `${origin}${DEPLOYMENT_PATH}`;
     const nativeFetch = globalThis.fetch;
     // Enforce offline operation but let the real fetch perform every local exchange.
@@ -181,43 +138,37 @@ export class MattermostHttpFixture {
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await Promise.all([this.server.connect(serverTransport), this.mcp.connect(clientTransport)]);
   }
-
   async listTools() {
     assert.ok(this.mcp);
     return this.mcp.listTools();
   }
-
-  private async result(name: string, args: Record<string, unknown>) {
+  async result(name, args) {
     assert.ok(this.mcp);
     const result = CallToolResultSchema.parse(await this.mcp.callTool({ name, arguments: args }));
     assert.deepEqual(this.failures, [], "Mattermost HTTP contract failed");
     assert.equal(result.content.length, 1);
-    const content = result.content[0]!;
+    const content = result.content[0];
     assert.equal(content.type, "text");
-    assert.ok(content.type === "text");
     return { text: content.text, isError: result.isError };
   }
-
-  async call<T = unknown>(name: string, args: Record<string, unknown> = {}): Promise<T> {
+  async call(name, args = {}) {
     const result = await this.result(name, args);
     assert.ok(!result.isError, `${name} failed: ${result.text}`);
-    return JSON.parse(result.text) as T;
+    return JSON.parse(result.text);
   }
-
-  async error(name: string, args: Record<string, unknown> = {}): Promise<string> {
+  async error(name, args = {}) {
     const result = await this.result(name, args);
     assert.equal(result.isError, true, `${name} unexpectedly succeeded: ${result.text}`);
     return result.text;
   }
-
-  async close(): Promise<void> {
+  async close() {
     try {
       await this.mcp?.close();
       await this.server?.close();
     } finally {
       try {
         if (this.http.listening) {
-          await new Promise<void>((resolve, reject) => {
+          await new Promise((resolve, reject) => {
             this.http.close((error) => (error ? reject(error) : resolve()));
             this.http.closeAllConnections();
           });
@@ -235,10 +186,9 @@ export class MattermostHttpFixture {
     );
   }
 }
-
 /** A fresh authenticated server/session per test; no environment credentials are read. */
-export function useMattermost(options: FixtureOptions = {}): () => MattermostHttpFixture {
-  let fixture: MattermostHttpFixture;
+export function useMattermost(options = {}) {
+  let fixture;
   beforeEach(async () => {
     fixture = new MattermostHttpFixture(options);
     await fixture.start();
