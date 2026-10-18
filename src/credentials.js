@@ -2,18 +2,18 @@
 // server at startup. Only `pat` and `oauth2` are ever stored: a password login
 // is exchanged for a session token up front and saved as a `pat`, so no
 // plaintext password ever touches disk. The file is 0600 (token / client secret).
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, renameSync, rmSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readFileSync, rmSync } from "node:fs";
 import { z } from "zod";
 import { credentialsFile } from "./paths.js";
-import { loadConfig, ServerUrlSchema } from "./config.js";
+import { loadConfig, ServerUrlSchema, OAuthRedirectSchema } from "./config.js";
+import { writePrivateJson } from "./private-json.js";
 const StoredAuthSchema = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("pat"), token: z.string().min(1) }),
   z.object({
     mode: z.literal("oauth2"),
     clientId: z.string().min(1),
     clientSecret: z.string().min(1),
-    redirect: z.string().url(),
+    redirect: OAuthRedirectSchema,
   }),
 ]);
 export const StoredCredentialsSchema = z.object({
@@ -30,27 +30,16 @@ export function readCredentials(file = credentialsFile()) {
 }
 /** Persist credentials with `0600` permissions, creating the config dir if needed. */
 export function writeCredentials(creds, file = credentialsFile()) {
-  const validated = StoredCredentialsSchema.parse(creds);
-  const dir = dirname(file);
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  // Replacing the file atomically preserves the previous login on a failed
-  // write, fixes existing permissive modes, and never follows a destination symlink.
-  const temporaryDir = mkdtempSync(join(dir, ".credentials-"));
-  try {
-    const temporaryFile = join(temporaryDir, "credentials.json");
-    writeFileSync(temporaryFile, JSON.stringify(validated, null, 2) + "\n", { mode: 0o600 });
-    renameSync(temporaryFile, file);
-  } finally {
-    rmSync(temporaryDir, { recursive: true, force: true });
-  }
+  writePrivateJson(file, StoredCredentialsSchema.parse(creds));
 }
 /** Delete the credentials file. Returns `true` if a file was removed. */
 export function clearCredentials(file = credentialsFile()) {
   try {
     rmSync(file);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if (error.code === "ENOENT") return false;
+    throw error;
   }
 }
 /** Map stored credentials onto the `MM_*` env vars loadConfig understands. */
