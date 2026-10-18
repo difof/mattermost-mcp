@@ -216,6 +216,41 @@ describe("session HTTP request resilience", () => {
 });
 describe("per-request authentication recovery", () => {
   const password = { mode: "password", loginId: "mzar", password: "test-password" };
+  it("refreshes a rejected cached OAuth token during startup identity verification", async () => {
+    oauth.acquireOAuthToken.mockResolvedValue({
+      accessToken: "rejected-cache",
+      refreshToken: "valid-refresh",
+      tokenType: "Bearer",
+    });
+    oauth.refreshOAuthToken.mockResolvedValue({ accessToken: "fresh-token", tokenType: "Bearer" });
+    const fetch = vi.fn(async (_url, options) =>
+      new Headers(options.headers).get("Authorization") === "BEARER fresh-token"
+        ? json(me)
+        : failure(401),
+    );
+    vi.stubGlobal("fetch", fetch);
+    const cfg = config({
+      mode: "oauth2",
+      clientId: "client",
+      clientSecret: "secret",
+      redirect: "http://127.0.0.1:7000/callback",
+    });
+    const session = await createSession(cfg);
+    expect(session.userId).toBe(me.id);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(oauth.acquireOAuthToken).toHaveBeenCalledWith(
+      cfg.url,
+      cfg.auth,
+      cfg.resilience.timeoutMs,
+    );
+    expect(oauth.refreshOAuthToken).toHaveBeenCalledOnce();
+    expect(oauth.refreshOAuthToken).toHaveBeenCalledWith(
+      cfg.url,
+      cfg.auth,
+      { accessToken: "rejected-cache", refreshToken: "valid-refresh", tokenType: "Bearer" },
+      cfg.resilience.timeoutMs,
+    );
+  });
   it("recovers the rejected request without replaying an earlier write", async () => {
     let logins = 0;
     let writes = 0;
