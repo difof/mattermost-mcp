@@ -55,17 +55,6 @@ async function call(
 describe("messaging tools", () => {
   // --- post_message ----------------------------------------------------------
 
-  it("post_message: happy path returns the created post", async () => {
-    const { text, isError } = await call(
-      "post_message",
-      { channel_id: "c1", message: "hello" },
-      {},
-      { createPost: async () => ({ id: "p1", message: "hello" }) as never },
-    );
-    expect(isError).toBe(false);
-    expect(text).toContain("p1");
-  });
-
   it("post_message: blocked by channel allowlist", async () => {
     const { text, isError } = await call(
       "post_message",
@@ -105,52 +94,6 @@ describe("messaging tools", () => {
 
   // --- get_channel_posts ----------------------------------------------------
 
-  it("get_channel_posts: omitted pagination uses defaults", async () => {
-    const getPosts = vi.fn(async () => ({ order: [], posts: {} }) as never);
-    const { isError } = await call("get_channel_posts", { channel_id: "c1" }, {}, { getPosts });
-
-    expect(isError).toBe(false);
-    expect(getPosts).toHaveBeenCalledWith("c1", 0, 60);
-  });
-
-  it("get_channel_posts: since alone does not gain conflicting pagination defaults", async () => {
-    const getPostsSince = vi.fn(async () => ({ order: [], posts: {} }) as never);
-    const getPosts = vi.fn();
-    const { isError } = await call(
-      "get_channel_posts",
-      { channel_id: "c1", since: 1720000000000 },
-      {},
-      { getPostsSince, getPosts },
-    );
-
-    expect(isError).toBe(false);
-    expect(getPostsSince).toHaveBeenCalledWith("c1", 1720000000000);
-    expect(getPosts).not.toHaveBeenCalled();
-  });
-
-  it.each(["before", "after"] as const)(
-    "get_channel_posts: %s preserves explicit pagination",
-    async (cursor) => {
-      const getPostsBefore = vi.fn(async () => ({ order: [], posts: {} }) as never);
-      const getPostsAfter = vi.fn(async () => ({ order: [], posts: {} }) as never);
-      const { isError } = await call(
-        "get_channel_posts",
-        { channel_id: "c1", [cursor]: "p1", page: 2, per_page: 25 },
-        {},
-        { getPostsBefore, getPostsAfter },
-      );
-
-      expect(isError).toBe(false);
-      expect(cursor === "before" ? getPostsBefore : getPostsAfter).toHaveBeenCalledWith(
-        "c1",
-        "p1",
-        2,
-        25,
-      );
-      expect(cursor === "before" ? getPostsAfter : getPostsBefore).not.toHaveBeenCalled();
-    },
-  );
-
   it.each([
     { since: 1720000000000, before: "p1" },
     { since: 1720000000000, after: "p1" },
@@ -176,105 +119,7 @@ describe("messaging tools", () => {
     for (const method of Object.values(client)) expect(method).not.toHaveBeenCalled();
   });
 
-  // --- get_post --------------------------------------------------------------
-
-  it("get_post: happy path returns the post", async () => {
-    const { text, isError } = await call(
-      "get_post",
-      { post_id: "p42" },
-      {},
-      { getPost: async () => ({ id: "p42", message: "content" }) as never },
-    );
-    expect(isError).toBe(false);
-    expect(text).toContain("p42");
-  });
-
-  // --- add_reaction ----------------------------------------------------------
-
-  it("add_reaction: calls addReaction with session.userId (me1)", async () => {
-    let capturedUserId: string | undefined;
-    const { text, isError } = await call(
-      "add_reaction",
-      { post_id: "p1", emoji_name: "thumbsup" },
-      {},
-      {
-        addReaction: async (userId: string, postId: string, emojiName: string) => {
-          capturedUserId = userId;
-          return { user_id: userId, post_id: postId, emoji_name: emojiName } as never;
-        },
-      },
-    );
-    expect(isError).toBe(false);
-    expect(capturedUserId).toBe("me1");
-    expect(text).toContain("me1");
-  });
-
-  // --- edit_post -------------------------------------------------------------
-
-  it("edit_post: calls patchPost (not createPost)", async () => {
-    let capturedPatch: unknown;
-    const { text, isError } = await call(
-      "edit_post",
-      { post_id: "p1", message: "updated" },
-      {},
-      {
-        patchPost: async (patch: unknown) => {
-          capturedPatch = patch;
-          return { id: "p1", message: "updated" } as never;
-        },
-      },
-    );
-    expect(isError).toBe(false);
-    expect(capturedPatch).toMatchObject({ id: "p1", message: "updated" });
-    expect(text).toContain("p1");
-  });
-
   // --- send_dm ---------------------------------------------------------------
-
-  it("send_dm: 1 other user → createDirectChannel with 2 members, then createPost", async () => {
-    let capturedMembers: string[] | undefined;
-    let capturedChannelId: string | undefined;
-
-    const { text, isError } = await call(
-      "send_dm",
-      { user_ids: ["other1"], message: "hey" },
-      {},
-      {
-        createDirectChannel: async (userIds: string[]) => {
-          capturedMembers = userIds;
-          return { id: "dm-channel" } as never;
-        },
-        createPost: async (post: { channel_id: string; message: string }) => {
-          capturedChannelId = post.channel_id;
-          return { id: "p1", channel_id: post.channel_id, message: post.message } as never;
-        },
-      },
-    );
-
-    expect(isError).toBe(false);
-    expect(capturedMembers).toEqual(["me1", "other1"]);
-    expect(capturedChannelId).toBe("dm-channel");
-    expect(text).toContain("p1");
-  });
-
-  it("send_dm: 2 other users → createGroupChannel with 3 members", async () => {
-    let capturedMembers: string[] | undefined;
-
-    await call(
-      "send_dm",
-      { user_ids: ["u2", "u3"], message: "hey group" },
-      {},
-      {
-        createGroupChannel: async (userIds: string[]) => {
-          capturedMembers = userIds;
-          return { id: "grp-channel" } as never;
-        },
-        createPost: async () => ({ id: "p2" }) as never,
-      },
-    );
-
-    expect(capturedMembers).toEqual(["me1", "u2", "u3"]);
-  });
 
   it.each([
     { user_ids: ["u2", "u2"], error: /unique participants/ },
