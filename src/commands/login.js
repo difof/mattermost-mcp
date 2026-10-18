@@ -3,20 +3,18 @@
 import { buildClient } from "../mattermost/client.js";
 import { acquireOAuthToken } from "../mattermost/oauth.js";
 import { captureSessionToken } from "../mattermost/browser.js";
-import { DEFAULT_RESILIENCE } from "../mattermost/resilience.js";
 import { formatMattermostError } from "../mattermost/errors.js";
 import { writeCredentials } from "../credentials.js";
 import { credentialsFile } from "../paths.js";
 import { prompt, promptSecret, select } from "../prompt.js";
-const DEFAULT_REDIRECT = "http://127.0.0.1:7000/callback";
+import { DEFAULT_OAUTH_REDIRECT, DEFAULT_RESILIENCE, ServerUrlSchema } from "../config.js";
 /** Trim trailing slashes and a stray `/api/v4`, then validate the URL. */
 function normalizeUrl(raw) {
   const trimmed = raw
     .trim()
     .replace(/\/+$/, "")
     .replace(/\/api\/v4$/, "");
-  new URL(trimmed); // throws on a malformed URL; caught by the caller
-  return trimmed;
+  return ServerUrlSchema.parse(trimmed);
 }
 async function promptUrl() {
   for (;;) {
@@ -80,7 +78,8 @@ export async function runLogin(args = []) {
   } else {
     const clientId = await prompt("OAuth2 Client ID: ");
     const clientSecret = await promptSecret("OAuth2 Client Secret: ");
-    const redirect = (await prompt(`Redirect URI [${DEFAULT_REDIRECT}]: `)) || DEFAULT_REDIRECT;
+    const redirect =
+      (await prompt(`Redirect URI [${DEFAULT_OAUTH_REDIRECT}]: `)) || DEFAULT_OAUTH_REDIRECT;
     const auth = { mode: "oauth2", clientId, clientSecret, redirect };
     // Runs the browser consent flow and caches the OAuth tokens under the config dir.
     const tokens = await acquireOAuthToken(url, auth);
