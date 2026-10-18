@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { callApi } from "../../api/client.js";
 import { resolveOperation } from "../../api/discovery.js";
 import { applyRequestResilience } from "../../mattermost/resilience.js";
+import { fetchFileContent, fetchFileMetadata } from "../../mattermost/files.js";
 import { ME, OK, useMattermost } from "./mattermost-http-fixture.js";
 
 const ID = "a".repeat(26);
@@ -343,42 +344,64 @@ describe("generic API access, error, and retry policy through MCP and HTTP", () 
 });
 
 // Inject the broken stream directly while keeping Client4 and the recovery runner real.
-it("recovers once when a received 401 response's body stream fails", async () => {
-  const client = new mattermost.Client4();
-  client.setUrl("https://mattermost.example.invalid/mattermost");
-  client.setToken("expired-test-token");
-  client.setIncludeCookies(false);
-  const recover = vi.fn(async () => {
-    client.setToken("refreshed-test-token");
-    return true;
-  });
-  // Disabling transient retries proves the second request comes from 401 recovery.
-  applyRequestResilience(client, { timeoutMs: 2000, maxRetries: 0, baseDelayMs: 0 }, recover);
-  const brokenBody = new ReadableStream({
-    start(controller) {
-      controller.error(new TypeError("connection lost while reading the error body"));
-    },
-  });
-  const fetch = vi
-    .spyOn(globalThis, "fetch")
-    .mockRejectedValue(new Error("Unexpected additional request"))
-    .mockResolvedValueOnce(new globalThis.Response(brokenBody, { status: 401 }))
-    .mockResolvedValueOnce(globalThis.Response.json({ id: ID }));
-  try {
-    await expect(
+it.each([
+  {
+    name: "generic API",
+    path: `/users/${ID}`,
+    request: (client) =>
       callApi(client, resolveOperation("GET /api/v4/users/{user_id}"), { path: { user_id: ID } }),
-    ).resolves.toMatchObject({ status: 200, data: { id: ID } });
-    expect(fetch).toHaveBeenCalledTimes(2);
-    expect(recover).toHaveBeenCalledOnce();
-    for (const [index, token] of ["expired-test-token", "refreshed-test-token"].entries()) {
-      const [url, options] = fetch.mock.calls[index];
-      expect(url).toBe(`https://mattermost.example.invalid/mattermost/api/v4/users/${ID}`);
-      expect(options).toMatchObject({ method: "GET", redirect: "manual" });
-      expect(new Headers(options.headers).get("authorization")).toMatch(
-        new RegExp(`^Bearer ${token}$`, "i"),
-      );
+    expected: { status: 200, data: { id: ID } },
+  },
+  {
+    name: "file metadata",
+    path: `/files/${ID}/info`,
+    request: (client) => fetchFileMetadata(client, ID),
+    expected: { id: ID },
+  },
+  {
+    name: "file download",
+    path: `/files/${ID}`,
+    request: (client) => fetchFileContent(client, ID, 1024),
+    expected: Buffer.from(JSON.stringify({ id: ID })),
+  },
+])(
+  "recovers $name once when a received 401 response's body stream fails",
+  async ({ path, request, expected }) => {
+    const client = new mattermost.Client4();
+    client.setUrl("https://mattermost.example.invalid/mattermost");
+    client.setToken("expired-test-token");
+    client.setIncludeCookies(false);
+    const recover = vi.fn(async () => {
+      client.setToken("refreshed-test-token");
+      return true;
+    });
+    // Disabling transient retries proves the second request comes from 401 recovery.
+    applyRequestResilience(client, { timeoutMs: 2000, maxRetries: 0, baseDelayMs: 0 }, recover);
+    const brokenBody = new ReadableStream({
+      start(controller) {
+        controller.error(new TypeError("connection lost while reading the error body"));
+      },
+    });
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValue(new Error("Unexpected additional request"))
+      .mockResolvedValueOnce(new globalThis.Response(brokenBody, { status: 401 }))
+      .mockResolvedValueOnce(globalThis.Response.json({ id: ID }));
+    try {
+      await expect(request(client)).resolves.toMatchObject(expected);
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(recover).toHaveBeenCalledOnce();
+      for (const [index, token] of ["expired-test-token", "refreshed-test-token"].entries()) {
+        const [url, options] = fetch.mock.calls[index];
+        expect(url).toBe(`https://mattermost.example.invalid/mattermost/api/v4${path}`);
+        expect(options.method.toUpperCase()).toBe("GET");
+        expect(options.redirect).toBe("manual");
+        expect(new Headers(options.headers).get("authorization")).toMatch(
+          new RegExp(`^Bearer ${token}$`, "i"),
+        );
+      }
+    } finally {
+      fetch.mockRestore();
     }
-  } finally {
-    fetch.mockRestore();
-  }
-});
+  },
+);
