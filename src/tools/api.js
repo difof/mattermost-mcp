@@ -1,11 +1,10 @@
 import { z } from "zod";
-import { defineTool } from "./registry.js";
 import { describeOperation, resolveOperation, searchOperations } from "../api/discovery.js";
 import { assertApiAccess, operationGuard } from "../api/policy.js";
 import { callApi } from "../api/client.js";
 
 const scalar = z.union([z.string(), z.number().finite(), z.boolean()]);
-const apiSearch = defineTool({
+const apiSearch = {
   name: "api_search",
   title: "Find Mattermost API operations",
   description:
@@ -19,9 +18,9 @@ const apiSearch = defineTool({
     .strict(),
   compact: true,
   handler: async (args) => searchOperations(args),
-});
+};
 
-const apiDescribe = defineTool({
+const apiDescribe = {
   name: "api_describe",
   title: "Describe a Mattermost API operation",
   description:
@@ -34,9 +33,9 @@ const apiDescribe = defineTool({
     .strict(),
   compact: true,
   handler: async (args) => describeOperation(args),
-});
+};
 
-const apiCall = defineTool({
+const apiCall = {
   name: "api_call",
   title: "Call a Mattermost API operation",
   description:
@@ -99,6 +98,6 @@ const apiCall = defineTool({
     await assertApiAccess(operation, args, session);
     return session.call((client) => callApi(client, operation, args));
   },
-});
+};
 
 export const apiTools = [apiSearch, apiDescribe, apiCall];
