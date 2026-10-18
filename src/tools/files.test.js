@@ -1,19 +1,11 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import type { Client4 } from "@mattermost/client";
 import mattermost from "@mattermost/client";
-import type { Config, GuardrailConfig } from "../config.js";
-import type { MattermostSession } from "../mattermost/types.js";
 import { dispatchToolCall } from "./registry.js";
 import { fileTools } from "./files.js";
 import { applyRequestResilience, applyRequestTimeout } from "../mattermost/resilience.js";
-
 // --- fixtures ----------------------------------------------------------------
-
-function fakeSession(
-  guardrails: Partial<GuardrailConfig> = {},
-  client: Partial<Client4> = {},
-): MattermostSession {
-  const config: Config = {
+function fakeSession(guardrails = {}, client = {}) {
+  const config = {
     url: "http://mm.test",
     auth: { mode: "pat", token: "t" },
     guardrails: {
@@ -25,26 +17,19 @@ function fakeSession(
       ...guardrails,
     },
   };
-  return { client: client as Client4, config, userId: "me1", call: (fn) => fn(client as Client4) };
+  return { client: client, config, userId: "me1", call: (fn) => fn(client) };
 }
-
-async function call(
-  name: string,
-  args: unknown,
-  guardrails: Partial<GuardrailConfig> = {},
-  client: Partial<Client4> = {},
-): Promise<{ text: string; isError: boolean }> {
+async function call(name, args, guardrails = {}, client = {}) {
   const res = await dispatchToolCall(
     fileTools,
     { session: fakeSession(guardrails, client) },
     name,
     args,
   );
-  return { text: (res.content[0] as { text: string }).text, isError: res.isError === true };
+  return { text: res.content[0].text, isError: res.isError === true };
 }
-
 /** Real Client4 so file requests exercise its authentication/options handling. */
-function rawFetchClient(): Client4 {
+function rawFetchClient() {
   const client = new mattermost.Client4();
   client.setUrl("http://mm.test");
   client.setToken("tok");
@@ -53,11 +38,8 @@ function rawFetchClient(): Client4 {
   applyRequestTimeout(client, 30_000);
   return client;
 }
-
 afterEach(() => vi.unstubAllGlobals());
-
 // --- tests -------------------------------------------------------------------
-
 describe("upload_file", () => {
   it("blocked under MM_READ_ONLY", async () => {
     const { text, isError } = await call(
@@ -68,7 +50,6 @@ describe("upload_file", () => {
     expect(isError).toBe(true);
     expect(text).toMatch(/read-only/);
   });
-
   it("blocked by channel allowlist", async () => {
     const { text, isError } = await call(
       "upload_file",
@@ -79,7 +60,6 @@ describe("upload_file", () => {
     expect(text).toMatch(/MM_CHANNEL_ALLOWLIST/);
   });
 });
-
 describe("get_file_metadata", () => {
   it("uses Client4 authentication, default headers, and the configured timeout", async () => {
     const fetch = vi.fn(async () => Response.json({ id: "f1", name: "a.txt" }));
@@ -101,7 +81,6 @@ describe("get_file_metadata", () => {
       }),
     );
   });
-
   it("preserves the HTTP status and Mattermost error details", async () => {
     vi.stubGlobal(
       "fetch",
@@ -127,7 +106,6 @@ describe("get_file_metadata", () => {
     expect(text).toContain("api.file.get_info.permissions.app_error");
     expect(text).toContain("Missing read_channel");
   });
-
   it("retries a transient metadata response through the session request policy", async () => {
     const fetch = vi
       .fn(async () => Response.json({ id: "f1", name: "a.txt" }))
@@ -141,7 +119,6 @@ describe("get_file_metadata", () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 });
-
 describe("get_file", () => {
   it("rebuilds authentication after a recoverable 401 response", async () => {
     const fetch = vi
@@ -168,7 +145,6 @@ describe("get_file", () => {
       }),
     );
   });
-
   it("returns complete base64 content for a file exactly at max_bytes", async () => {
     vi.stubGlobal(
       "fetch",
@@ -187,9 +163,8 @@ describe("get_file", () => {
       content_base64: "aGVsbG8=",
     });
   });
-
   it("cancels an oversized Content-Length without reading the file body", async () => {
-    const pull = vi.fn((controller: ReadableStreamDefaultController<Uint8Array>) => {
+    const pull = vi.fn((controller) => {
       controller.enqueue(new Uint8Array(10));
     });
     const cancel = vi.fn();
@@ -209,11 +184,10 @@ describe("get_file", () => {
     expect(pull).not.toHaveBeenCalled();
     expect(cancel).toHaveBeenCalledOnce();
   });
-
   it.each([{}, { "Content-Length": "1" }, { "Content-Encoding": "gzip" }])(
     "stops an oversized stream even without trustworthy length headers: %j",
     async (headers) => {
-      const pull = vi.fn((controller: ReadableStreamDefaultController<Uint8Array>) => {
+      const pull = vi.fn((controller) => {
         controller.enqueue(new Uint8Array(3));
       });
       const cancel = vi.fn();
@@ -234,12 +208,11 @@ describe("get_file", () => {
       expect(cancel).toHaveBeenCalledOnce();
     },
   );
-
   it.each([true, false])(
     "does not retry an oversized download when cancellation fails (known length: %s)",
     async (knownLength) => {
       const fetch = vi.fn(async () => {
-        const body = new ReadableStream<Uint8Array>(
+        const body = new ReadableStream(
           {
             pull(controller) {
               controller.enqueue(new Uint8Array(6));
@@ -263,7 +236,6 @@ describe("get_file", () => {
       expect(fetch).toHaveBeenCalledOnce();
     },
   );
-
   it("preserves the status and plain-text body when a proxy returns a non-JSON error", async () => {
     vi.stubGlobal(
       "fetch",
