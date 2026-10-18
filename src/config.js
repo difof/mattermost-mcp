@@ -1,4 +1,10 @@
 import { z } from "zod";
+export const DEFAULT_OAUTH_REDIRECT = "http://127.0.0.1:7000/callback";
+export const DEFAULT_RESILIENCE = {
+  timeoutMs: 30_000,
+  maxRetries: 3,
+  baseDelayMs: 500,
+};
 // --- Env schema --------------------------------------------------------------
 const boolEnv = (def) =>
   z
@@ -30,6 +36,34 @@ export const ServerUrlSchema = z
     }
   })
   .transform((value) => new URL(value).toString().replace(/\/+$/, ""));
+/** The consent catcher serves HTTP on the loopback host named in this URI. */
+export const OAuthRedirectSchema = z
+  .string()
+  .trim()
+  .url()
+  .superRefine((value, ctx) => {
+    let url;
+    try {
+      url = new URL(value);
+    } catch {
+      return;
+    }
+    if (
+      url.protocol !== "http:" ||
+      !["127.0.0.1", "[::1]", "localhost"].includes(url.hostname) ||
+      url.username ||
+      url.password ||
+      value.includes("?") ||
+      value.includes("#") ||
+      url.port === "0"
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "Use an HTTP loopback OAuth redirect (127.0.0.1, [::1], or localhost) with a nonzero port and no credentials, query, or fragment",
+      });
+    }
+  });
 const EnvSchema = z
   .object({
     MM_URL: ServerUrlSchema,
@@ -40,15 +74,19 @@ const EnvSchema = z
     MM_MFA_TOKEN: z.string().min(1).optional(),
     MM_CLIENT_ID: z.string().min(1).optional(),
     MM_CLIENT_SECRET: z.string().min(1).optional(),
-    MM_OAUTH_REDIRECT: z.string().url().default("http://127.0.0.1:7000/callback"),
+    MM_OAUTH_REDIRECT: OAuthRedirectSchema.default(DEFAULT_OAUTH_REDIRECT),
     MM_READ_ONLY: boolEnv("false"),
     MM_ALLOW_DESTRUCTIVE: boolEnv("false"),
     MM_TEAM_ALLOWLIST: z.string().optional(),
     MM_CHANNEL_ALLOWLIST: z.string().optional(),
     MM_MAX_MESSAGE_LEN: z.coerce.number().int().positive().default(16383),
-    MM_REQUEST_TIMEOUT_MS: z.coerce.number().int().nonnegative().default(30000),
-    MM_MAX_RETRIES: z.coerce.number().int().nonnegative().default(3),
-    MM_RETRY_BASE_MS: z.coerce.number().int().positive().default(500),
+    MM_REQUEST_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .nonnegative()
+      .default(DEFAULT_RESILIENCE.timeoutMs),
+    MM_MAX_RETRIES: z.coerce.number().int().nonnegative().default(DEFAULT_RESILIENCE.maxRetries),
+    MM_RETRY_BASE_MS: z.coerce.number().int().positive().default(DEFAULT_RESILIENCE.baseDelayMs),
   })
   .superRefine((e, ctx) => {
     const require = (key, present) => {
