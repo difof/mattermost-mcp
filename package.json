@@ -36,14 +36,14 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "dev": "tsx src/index.ts",
+    "dev": "node src/index.js",
     "start": "node dist/index.js",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:mocks": "vitest run src/integration/mocked",
-    "test:integration": "MM_INTEGRATION=1 vitest run src/integration/live.integration.test.ts",
+    "test:integration": "MM_INTEGRATION=1 vitest run src/integration/live.integration.test.js",
     "changeset": "changeset",
     "version": "changeset version",
     "release": "npm run build && changeset publish"
@@ -59,13 +59,11 @@
     "@changesets/changelog-github": "^0.7.0",
     "@changesets/cli": "^2.31.0",
     "@eslint/js": "^9.9",
-    "@types/node": "^20.14",
     "eslint": "^9.9",
     "eslint-config-prettier": "^9.1",
+    "globals": "^17.13.0",
     "prettier": "^3.3",
-    "tsx": "^4.16",
-    "typescript": "^5.5",
-    "typescript-eslint": "^8.0",
-    "vitest": "^2.0"
+    "vitest": "^2.0",
+    "yaml": "^2.9.1"
   }
 }
