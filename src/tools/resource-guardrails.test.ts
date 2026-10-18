@@ -15,7 +15,7 @@ function fixture(guardrails: Partial<GuardrailConfig> = {}) {
   const client = {
     getChannel: vi.fn(async () => ({ id: "allowed", team_id: "team1" })),
     getPost: vi.fn(async () => ({ id: "post1", channel_id: "blocked" })),
-    getPostThread: vi.fn(),
+    getPaginatedPostThread: vi.fn(),
     patchPost: vi.fn(async () => ({ id: "post1", message: "updated" })),
     deletePost: vi.fn(),
     pinPost: vi.fn(),
@@ -98,7 +98,7 @@ describe("resolved resource allowlists", () => {
     expect(result.isError).toBe(true);
     expect(body(result)).toContain("MM_CHANNEL_ALLOWLIST");
     for (const method of [
-      client.getPostThread,
+      client.getPaginatedPostThread,
       client.patchPost,
       client.deletePost,
       client.pinPost,
@@ -241,7 +241,7 @@ describe("resolved resource allowlists", () => {
       };
       client.getPost.mockResolvedValue(post);
       const list = { posts: { p1: post }, order: ["p1"], next_post_id: "next-page" };
-      client.getPostThread.mockResolvedValue(list);
+      client.getPaginatedPostThread.mockResolvedValue(list);
       Object.assign(client, { getPosts: vi.fn(async () => list) });
       client.searchPosts.mockResolvedValue(list as never);
       const result = await call(name, {
