@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { Blob } from "node:buffer";
 import { describe, expect, it } from "vitest";
-import { useMattermost } from "./mattermost-http-fixture.ts";
+import { useMattermost } from "./mattermost-http-fixture.js";
 
 const catalog = JSON.parse(
   readFileSync(new URL("../../api/catalog.json", import.meta.url), "utf8"),
