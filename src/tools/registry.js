@@ -1,7 +1,12 @@
 // Validate tool arguments, apply guards, execute handlers, and format MCP results.
 // The low-level MCP Server uses the schemas for tools/list and tools/call.
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import {
+  CallToolRequestSchema,
+  ErrorCode,
+  ListToolsRequestSchema,
+  McpError,
+} from "@modelcontextprotocol/sdk/types.js";
 import { formatMattermostError } from "../mattermost/errors.js";
 import { GuardrailError, assertWriteAllowed, assertMessageWithinLimit } from "../guardrails.js";
 import { ResourceGuard } from "../resource-guardrails.js";
@@ -37,12 +42,12 @@ function formatResult(result, compact = false) {
 }
 /**
  * Validate args, enforce guardrails, run the handler, and format the result.
- * Never throws: guardrail refusals and API errors both come back as
- * `isError: true` text content (API errors surfaced verbatim).
+ * Unknown tool names are protocol errors. Validation, guardrail, and API
+ * failures return `isError: true` tool results so the caller can correct them.
  */
 export async function dispatchToolCall(tools, ctx, name, rawArgs) {
   const tool = tools.find((t) => t.name === name);
-  if (!tool) return text(`unknown tool: ${name}`, true);
+  if (!tool) throw new McpError(ErrorCode.InvalidParams, `unknown tool: ${name}`);
   const parsed = tool.inputSchema.safeParse(rawArgs ?? {});
   if (!parsed.success) {
     const detail = parsed.error.issues
@@ -66,7 +71,7 @@ export async function dispatchToolCall(tools, ctx, name, rawArgs) {
     }
     const resources = new ResourceGuard(ctx.session);
     if (tool.resources) await resources.assertResources(tool.resources(args));
-    const result = await tool.handler(args, ctx);
+    const result = await tool.handler(args, { ...ctx, resources });
     return text(
       formatResult(
         tool.resultScope ? await resources.filterResult(tool.resultScope, result) : result,
