@@ -14,7 +14,11 @@ This creates a file like `.changeset/funny-pandas-clap.md`. Commit it with your 
 
 ## What the CI does
 
-On push to `main`, the release workflow:
+The base branch is `master`. Automatic npm publishing is restricted to the upstream
+repository in `release.yml`; this fork is installed from source. Before enabling
+publishing for the fork, configure its own package name and npm publishing identity.
+
+When enabled, on push to `master`, the release workflow:
 
 1. If unreleased changesets exist → opens/updates a **"Version Packages"** PR that
    consumes them, bumps `package.json`, and writes `CHANGELOG.md`.

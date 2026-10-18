@@ -1,11 +1,11 @@
 {
   "$schema": "https://unpkg.com/@changesets/config@3.0.0/schema.json",
-  "changelog": ["@changesets/changelog-github", { "repo": "BryanBerger98/mattermost-mcp" }],
+  "changelog": ["@changesets/changelog-github", { "repo": "difof/mattermost-mcp" }],
   "commit": false,
   "fixed": [],
   "linked": [],
   "access": "public",
-  "baseBranch": "main",
+  "baseBranch": "master",
   "updateInternalDependencies": "patch",
   "ignore": []
 }

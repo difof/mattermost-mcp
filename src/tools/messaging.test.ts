@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { Client4 } from "@mattermost/client";
 import type { Config, GuardrailConfig } from "../config.js";
 import type { MattermostSession } from "../mattermost/types.js";
@@ -77,6 +77,21 @@ describe("messaging tools", () => {
     expect(text).toMatch(/MM_CHANNEL_ALLOWLIST/);
   });
 
+  it("post_message: an empty optional root_id remains a top-level post under allowlists", async () => {
+    const createPost = vi.fn(async () => ({ id: "p1", channel_id: "c1" }) as never);
+    const getPost = vi.fn();
+    const { isError } = await call(
+      "post_message",
+      { channel_id: "c1", message: "hello", root_id: "" },
+      { channelAllowlist: ["c1"] },
+      { createPost, getPost },
+    );
+
+    expect(isError).toBe(false);
+    expect(createPost).toHaveBeenCalledWith({ channel_id: "c1", message: "hello", root_id: "" });
+    expect(getPost).not.toHaveBeenCalled();
+  });
+
   it("post_message: blocked when message exceeds maxMessageLen", async () => {
     const { text, isError } = await call(
       "post_message",
@@ -86,6 +101,79 @@ describe("messaging tools", () => {
     );
     expect(isError).toBe(true);
     expect(text).toMatch(/exceeds/);
+  });
+
+  // --- get_channel_posts ----------------------------------------------------
+
+  it("get_channel_posts: omitted pagination uses defaults", async () => {
+    const getPosts = vi.fn(async () => ({ order: [], posts: {} }) as never);
+    const { isError } = await call("get_channel_posts", { channel_id: "c1" }, {}, { getPosts });
+
+    expect(isError).toBe(false);
+    expect(getPosts).toHaveBeenCalledWith("c1", 0, 60);
+  });
+
+  it("get_channel_posts: since alone does not gain conflicting pagination defaults", async () => {
+    const getPostsSince = vi.fn(async () => ({ order: [], posts: {} }) as never);
+    const getPosts = vi.fn();
+    const { isError } = await call(
+      "get_channel_posts",
+      { channel_id: "c1", since: 1720000000000 },
+      {},
+      { getPostsSince, getPosts },
+    );
+
+    expect(isError).toBe(false);
+    expect(getPostsSince).toHaveBeenCalledWith("c1", 1720000000000);
+    expect(getPosts).not.toHaveBeenCalled();
+  });
+
+  it.each(["before", "after"] as const)(
+    "get_channel_posts: %s preserves explicit pagination",
+    async (cursor) => {
+      const getPostsBefore = vi.fn(async () => ({ order: [], posts: {} }) as never);
+      const getPostsAfter = vi.fn(async () => ({ order: [], posts: {} }) as never);
+      const { isError } = await call(
+        "get_channel_posts",
+        { channel_id: "c1", [cursor]: "p1", page: 2, per_page: 25 },
+        {},
+        { getPostsBefore, getPostsAfter },
+      );
+
+      expect(isError).toBe(false);
+      expect(cursor === "before" ? getPostsBefore : getPostsAfter).toHaveBeenCalledWith(
+        "c1",
+        "p1",
+        2,
+        25,
+      );
+      expect(cursor === "before" ? getPostsAfter : getPostsBefore).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { since: 1720000000000, before: "p1" },
+    { since: 1720000000000, after: "p1" },
+    { since: 1720000000000, page: 0 },
+    { since: 1720000000000, per_page: 60 },
+    { before: "p1", after: "p2" },
+  ])("get_channel_posts: rejects conflicting filters %j before an API call", async (filters) => {
+    const client = {
+      getPosts: vi.fn(),
+      getPostsSince: vi.fn(),
+      getPostsBefore: vi.fn(),
+      getPostsAfter: vi.fn(),
+    };
+    const { text, isError } = await call(
+      "get_channel_posts",
+      { channel_id: "c1", ...filters },
+      {},
+      client,
+    );
+
+    expect(isError).toBe(true);
+    expect(text).toMatch(/invalid arguments.*(cannot be combined|mutually exclusive)/);
+    for (const method of Object.values(client)) expect(method).not.toHaveBeenCalled();
   });
 
   // --- get_post --------------------------------------------------------------
@@ -186,6 +274,46 @@ describe("messaging tools", () => {
     );
 
     expect(capturedMembers).toEqual(["me1", "u2", "u3"]);
+  });
+
+  it.each([
+    { user_ids: ["u2", "u2"], error: /unique participants/ },
+    { user_ids: ["me1"], error: /not the authenticated user/ },
+    { user_ids: ["u2", "me1"], error: /not the authenticated user/ },
+    { user_ids: [""], error: /at least 1 character/ },
+  ])("send_dm: rejects invalid participants $user_ids before creating a channel", async (input) => {
+    const client = {
+      createDirectChannel: vi.fn(),
+      createGroupChannel: vi.fn(),
+      createPost: vi.fn(),
+    };
+    const { text, isError } = await call(
+      "send_dm",
+      { user_ids: input.user_ids, message: "hello" },
+      {},
+      client,
+    );
+
+    expect(isError).toBe(true);
+    expect(text).toMatch(/invalid arguments/);
+    expect(text).toMatch(input.error);
+    for (const method of Object.values(client)) expect(method).not.toHaveBeenCalled();
+  });
+
+  it("send_dm: seven other users produce an eight-person group", async () => {
+    const otherUsers = ["u2", "u3", "u4", "u5", "u6", "u7", "u8"];
+    const createGroupChannel = vi.fn(async () => ({ id: "group8" }) as never);
+    const createPost = vi.fn(async () => ({ id: "p8" }) as never);
+    const { isError } = await call(
+      "send_dm",
+      { user_ids: otherUsers, message: "hello everyone" },
+      {},
+      { createGroupChannel, createPost },
+    );
+
+    expect(isError).toBe(false);
+    expect(createGroupChannel).toHaveBeenCalledWith(["me1", ...otherUsers]);
+    expect(createPost).toHaveBeenCalledWith({ channel_id: "group8", message: "hello everyone" });
   });
 
   // --- delete_post -----------------------------------------------------------

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { defineTool, type AnyToolDef } from "./registry.js";
+import { fetchFileContent, fetchFileMetadata } from "../mattermost/files.js";
 
 const DEFAULT_MAX_BYTES = 8 * 1024 * 1024;
 
@@ -44,14 +45,8 @@ const getFileMetadata = defineTool({
   inputSchema: z.object({
     file_id: z.string().describe("File id."),
   }),
-  handler: (args, { session }) =>
-    session.call(async (c) => {
-      const res = await fetch(`${c.getFileRoute(args.file_id)}/info`, {
-        headers: { Authorization: `Bearer ${c.getToken()}` },
-      });
-      if (!res.ok) throw new Error(`Mattermost API error ${res.status}: ${await res.text()}`);
-      return res.json();
-    }),
+  resources: (args) => ({ fileId: args.file_id }),
+  handler: (args, { session }) => session.call((c) => fetchFileMetadata(c, args.file_id)),
 });
 
 // ---------------------------------------------------------------------------
@@ -71,18 +66,10 @@ const getFile = defineTool({
       .optional()
       .describe(`Maximum number of bytes to accept (default ${DEFAULT_MAX_BYTES}).`),
   }),
+  resources: (args) => ({ fileId: args.file_id }),
   handler: (args, { session }) =>
     session.call(async (c) => {
-      const res = await fetch(c.getFileRoute(args.file_id), {
-        headers: { Authorization: `Bearer ${c.getToken()}` },
-      });
-      if (!res.ok) throw new Error(`Mattermost API error ${res.status}: ${await res.text()}`);
-      const buf = Buffer.from(await res.arrayBuffer());
-      const limit = args.max_bytes ?? DEFAULT_MAX_BYTES;
-      if (buf.byteLength > limit)
-        throw new Error(
-          `file is ${buf.byteLength} bytes, exceeds max_bytes (${limit}); raise max_bytes to download`,
-        );
+      const buf = await fetchFileContent(c, args.file_id, args.max_bytes ?? DEFAULT_MAX_BYTES);
       return {
         file_id: args.file_id,
         bytes: buf.byteLength,

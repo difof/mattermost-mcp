@@ -1,6 +1,6 @@
 // Pure, network-free safety checks evaluated BEFORE any write reaches the API.
-// The tool framework (Phase 4) composes these around every handler; resource
-// allowlists are checked after the framework resolves channel→team.
+// The tool framework composes these around every handler; resource-guardrails.ts
+// resolves indirect post/file/channel references before checking the allowlists.
 import type { GuardrailConfig } from "./config.js";
 
 /** A guardrail refusal — distinct from a Mattermost API error. */

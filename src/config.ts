@@ -32,9 +32,36 @@ const boolEnv = (def: "true" | "false") =>
     .preprocess((v) => (v == null ? def : v), z.enum(["true", "false"]))
     .transform((v) => v === "true");
 
+/** Mattermost's server root, optionally including a deployment subpath. */
+export const ServerUrlSchema = z
+  .string()
+  .trim()
+  .url()
+  .superRefine((value, ctx) => {
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      return; // The URL validator already reports malformed URLs.
+    }
+    const issue = (message: string): void => {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message });
+    };
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      issue("Use an http:// or https:// Mattermost server URL");
+    }
+    if (url.username || url.password || value.includes("?") || value.includes("#")) {
+      issue("The Mattermost server URL must not include credentials, a query, or a fragment");
+    }
+    if (/\/api\/v4\/*$/.test(url.pathname)) {
+      issue("Use the Mattermost server root URL without /api/v4");
+    }
+  })
+  .transform((value) => new URL(value).toString().replace(/\/+$/, ""));
+
 const EnvSchema = z
   .object({
-    MM_URL: z.string().url(),
+    MM_URL: ServerUrlSchema,
     MM_AUTH_MODE: z.enum(["pat", "password", "oauth2"]).default("pat"),
 
     MM_TOKEN: z.string().min(1).optional(),
@@ -131,7 +158,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
 
   const e = parsed.data;
   return {
-    url: e.MM_URL.replace(/\/+$/, ""),
+    url: e.MM_URL,
     auth: buildAuth(e),
     guardrails: {
       readOnly: e.MM_READ_ONLY,
