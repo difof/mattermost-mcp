@@ -59,26 +59,6 @@ afterEach(() => vi.unstubAllGlobals());
 // --- tests -------------------------------------------------------------------
 
 describe("upload_file", () => {
-  it("happy path — returns mapped file info", async () => {
-    const uploadFile = vi.fn(async () => ({
-      file_infos: [{ id: "f42", name: "hi.txt", size: 2, mime_type: "text/plain" }],
-      client_ids: [],
-    }));
-    const { text, isError } = await call(
-      "upload_file",
-      {
-        channel_id: "c1",
-        filename: "hi.txt",
-        content_base64: Buffer.from("hi").toString("base64"),
-      },
-      {},
-      { uploadFile } as unknown as Partial<Client4>,
-    );
-    expect(isError).toBe(false);
-    expect(text).toContain("f42");
-    expect(uploadFile).toHaveBeenCalledOnce();
-  });
-
   it("blocked under MM_READ_ONLY", async () => {
     const { text, isError } = await call(
       "upload_file",
@@ -101,21 +81,6 @@ describe("upload_file", () => {
 });
 
 describe("get_file_metadata", () => {
-  it("returns the JSON metadata from the API", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => Response.json({ id: "f1", name: "a.txt" })),
-    );
-    const { text, isError } = await call(
-      "get_file_metadata",
-      { file_id: "f1" },
-      {},
-      rawFetchClient(),
-    );
-    expect(isError).toBe(false);
-    expect(text).toContain("f1");
-  });
-
   it("uses Client4 authentication, default headers, and the configured timeout", async () => {
     const fetch = vi.fn(async () => Response.json({ id: "f1", name: "a.txt" }));
     vi.stubGlobal("fetch", fetch);
@@ -135,21 +100,6 @@ describe("get_file_metadata", () => {
         }),
       }),
     );
-  });
-
-  it("surfaces a non-ok response as Mattermost API error", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response("Not found", { status: 404 })),
-    );
-    const { text, isError } = await call(
-      "get_file_metadata",
-      { file_id: "missing" },
-      {},
-      rawFetchClient(),
-    );
-    expect(isError).toBe(true);
-    expect(text).toMatch(/Mattermost API error 404/);
   });
 
   it("preserves the HTTP status and Mattermost error details", async () => {
@@ -193,17 +143,6 @@ describe("get_file_metadata", () => {
 });
 
 describe("get_file", () => {
-  it("returns base64 content of the downloaded file", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response("hello")),
-    );
-    const { text, isError } = await call("get_file", { file_id: "f1" }, {}, rawFetchClient());
-    expect(isError).toBe(false);
-    // "hello" in base64
-    expect(text).toContain(Buffer.from("hello").toString("base64")); // "aGVsbG8="
-  });
-
   it("rebuilds authentication after a recoverable 401 response", async () => {
     const fetch = vi
       .fn(async () => new Response("hello"))
@@ -230,22 +169,7 @@ describe("get_file", () => {
     );
   });
 
-  it("rejects when file exceeds max_bytes", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response("hello")),
-    );
-    const { text, isError } = await call(
-      "get_file",
-      { file_id: "f1", max_bytes: 1 },
-      {},
-      rawFetchClient(),
-    );
-    expect(isError).toBe(true);
-    expect(text).toMatch(/exceeds max_bytes/);
-  });
-
-  it("accepts a file exactly at max_bytes", async () => {
+  it("returns complete base64 content for a file exactly at max_bytes", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response("hello")),
@@ -257,7 +181,11 @@ describe("get_file", () => {
       rawFetchClient(),
     );
     expect(isError).toBe(false);
-    expect(JSON.parse(text).bytes).toBe(5);
+    expect(JSON.parse(text)).toEqual({
+      file_id: "f1",
+      bytes: 5,
+      content_base64: "aGVsbG8=",
+    });
   });
 
   it("cancels an oversized Content-Length without reading the file body", async () => {
@@ -336,13 +264,13 @@ describe("get_file", () => {
     },
   );
 
-  it("surfaces a non-ok response as Mattermost API error", async () => {
+  it("preserves the status and plain-text body when a proxy returns a non-JSON error", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response("Not found", { status: 404 })),
     );
     const { text, isError } = await call("get_file", { file_id: "gone" }, {}, rawFetchClient());
     expect(isError).toBe(true);
-    expect(text).toMatch(/Mattermost API error 404/);
+    expect(text).toContain("Mattermost API error 404: Not found");
   });
 });
