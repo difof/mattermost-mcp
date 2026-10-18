@@ -3,11 +3,6 @@
 // write did not reach the server.
 import mattermost from "@mattermost/client";
 import { log } from "../log.js";
-export const DEFAULT_RESILIENCE = {
-  timeoutMs: 30_000,
-  maxRetries: 3,
-  baseDelayMs: 500,
-};
 /**
  * A status is transient (worth retrying) when it is a rate-limit, a server
  * error, or unknown/zero (network failure or aborted request). A `401` is NOT
