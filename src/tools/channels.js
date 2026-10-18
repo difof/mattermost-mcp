@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { routeSegment } from "./route-params.js";
 import { doClientFetch } from "../mattermost/client.js";
 // ── 1. list_teams ────────────────────────────────────────────────────────────
 const listTeams = {
@@ -6,7 +7,7 @@ const listTeams = {
   title: "List my teams",
   description:
     "Return all Mattermost teams the authenticated user belongs to (GET /users/me/teams).",
-  inputSchema: z.object({}),
+  inputSchema: z.object({}).strict(),
   resultScope: "teams",
   handler: (_args, { session }) => session.call((c) => c.getMyTeams()),
 };
@@ -16,9 +17,11 @@ const listChannels = {
   title: "List my channels",
   description:
     "Return all channels the authenticated user belongs to in a team (GET /users/me/teams/{tid}/channels).",
-  inputSchema: z.object({
-    team_id: z.string().describe("Team ID to list channels for."),
-  }),
+  inputSchema: z
+    .object({
+      team_id: routeSegment.describe("Team ID to list channels for."),
+    })
+    .strict(),
   resources: (args) => ({ teamId: args.team_id }),
   resultScope: "channels",
   handler: (args, { session }) => session.call((c) => c.getMyChannels(args.team_id)),
@@ -28,23 +31,27 @@ const getChannel = {
   name: "get_channel",
   title: "Get channel",
   description: "Return a single channel by ID (GET /channels/{id}).",
-  inputSchema: z.object({
-    channel_id: z.string().describe("Channel ID to retrieve."),
-  }),
+  inputSchema: z
+    .object({
+      channel_id: routeSegment.describe("Channel ID to retrieve."),
+    })
+    .strict(),
   resources: (args) => ({ channelId: args.channel_id }),
-  handler: (args, { session }) => session.call((c) => c.getChannel(args.channel_id)),
+  handler: (args, { resources }) => resources.channel(args.channel_id),
 };
 // ── 4. create_channel ────────────────────────────────────────────────────────
 const createChannel = {
   name: "create_channel",
   title: "Create channel",
   description: "Create a new channel in a team (POST /channels).",
-  inputSchema: z.object({
-    name: z.string().describe("URL-safe handle for the channel (slug)."),
-    display_name: z.string().describe("Human-readable channel name."),
-    type: z.enum(["O", "P"]).describe("Channel type: O = public, P = private."),
-    team_id: z.string().describe("Team ID in which to create the channel."),
-  }),
+  inputSchema: z
+    .object({
+      name: z.string().describe("URL-safe handle for the channel (slug)."),
+      display_name: z.string().describe("Human-readable channel name."),
+      type: z.enum(["O", "P"]).describe("Channel type: O = public, P = private."),
+      team_id: routeSegment.describe("Team ID in which to create the channel."),
+    })
+    .strict(),
   write: true,
   resources: (args) => ({ teamId: args.team_id, createsChannel: true }),
   handler: (args, { session }) =>
@@ -62,9 +69,11 @@ const joinChannel = {
   name: "join_channel",
   title: "Join channel",
   description: "Add the authenticated user to a channel (POST /channels/{id}/members).",
-  inputSchema: z.object({
-    channel_id: z.string().describe("Channel ID to join."),
-  }),
+  inputSchema: z
+    .object({
+      channel_id: routeSegment.describe("Channel ID to join."),
+    })
+    .strict(),
   write: true,
   resources: (args) => ({ channelId: args.channel_id }),
   handler: (args, { session }) =>
@@ -76,9 +85,11 @@ const leaveChannel = {
   title: "Leave channel",
   description:
     "Remove the authenticated user from a channel (DELETE /channels/{id}/members/{uid}).",
-  inputSchema: z.object({
-    channel_id: z.string().describe("Channel ID to leave."),
-  }),
+  inputSchema: z
+    .object({
+      channel_id: routeSegment.describe("Channel ID to leave."),
+    })
+    .strict(),
   write: true,
   resources: (args) => ({ channelId: args.channel_id }),
   handler: (args, { session }) =>
@@ -89,10 +100,15 @@ const archiveChannel = {
   name: "archive_channel",
   title: "Archive channel",
   description: "Soft-delete (archive) a channel (DELETE /channels/{id}).",
-  inputSchema: z.object({
-    channel_id: z.string().describe("Channel ID to archive."),
-    confirm: z.boolean().optional().describe("Must be true to authorize this destructive action."),
-  }),
+  inputSchema: z
+    .object({
+      channel_id: routeSegment.describe("Channel ID to archive."),
+      confirm: z
+        .boolean()
+        .optional()
+        .describe("Must be true to authorize this destructive action."),
+    })
+    .strict(),
   destructive: true,
   resources: (args) => ({ channelId: args.channel_id }),
   handler: (args, { session }) => session.call((c) => c.deleteChannel(args.channel_id)),
@@ -102,17 +118,19 @@ const listChannelMembers = {
   name: "list_channel_members",
   title: "List channel members",
   description: "Return a page of members for a channel (GET /channels/{id}/members).",
-  inputSchema: z.object({
-    channel_id: z.string().describe("Channel ID."),
-    page: z.number().int().min(0).optional().default(0).describe("Zero-based page number."),
-    per_page: z
-      .number()
-      .int()
-      .min(1)
-      .optional()
-      .default(60)
-      .describe("Number of members per page."),
-  }),
+  inputSchema: z
+    .object({
+      channel_id: routeSegment.describe("Channel ID."),
+      page: z.number().int().min(0).optional().default(0).describe("Zero-based page number."),
+      per_page: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .default(60)
+        .describe("Number of members per page."),
+    })
+    .strict(),
   resources: (args) => ({ channelId: args.channel_id }),
   handler: (args, { session }) =>
     session.call((c) => c.getChannelMembers(args.channel_id, args.page, args.per_page)),
@@ -122,10 +140,12 @@ const addMember = {
   name: "add_member",
   title: "Add member to channel",
   description: "Add a user to a channel (POST /channels/{id}/members).",
-  inputSchema: z.object({
-    channel_id: z.string().describe("Channel ID."),
-    user_id: z.string().describe("ID of the user to add."),
-  }),
+  inputSchema: z
+    .object({
+      channel_id: routeSegment.describe("Channel ID."),
+      user_id: routeSegment.describe("ID of the user to add."),
+    })
+    .strict(),
   write: true,
   resources: (args) => ({ channelId: args.channel_id }),
   handler: (args, { session }) =>
@@ -136,11 +156,16 @@ const removeMember = {
   name: "remove_member",
   title: "Remove member from channel",
   description: "Remove a user from a channel (DELETE /channels/{id}/members/{uid}).",
-  inputSchema: z.object({
-    channel_id: z.string().describe("Channel ID."),
-    user_id: z.string().describe("ID of the user to remove."),
-    confirm: z.boolean().optional().describe("Must be true to authorize this destructive action."),
-  }),
+  inputSchema: z
+    .object({
+      channel_id: routeSegment.describe("Channel ID."),
+      user_id: routeSegment.describe("ID of the user to remove."),
+      confirm: z
+        .boolean()
+        .optional()
+        .describe("Must be true to authorize this destructive action."),
+    })
+    .strict(),
   destructive: true,
   resources: (args) => ({ channelId: args.channel_id }),
   handler: (args, { session }) =>
@@ -152,9 +177,11 @@ const getUnreads = {
   title: "Get channel unreads",
   description:
     "Return unread counts per channel for the authenticated user in a team (GET /users/me/teams/{tid}/channels/members, then GET /users/me/channels/{id}/unread).",
-  inputSchema: z.object({
-    team_id: z.string().describe("Team ID to query."),
-  }),
+  inputSchema: z
+    .object({
+      team_id: routeSegment.describe("Team ID to query."),
+    })
+    .strict(),
   resources: (args) => ({ teamId: args.team_id }),
   resultScope: "channelItems",
   handler: async (args, { session }) => {
@@ -190,9 +217,11 @@ const markChannelRead = {
   title: "Mark channel as read",
   description:
     "Mark a channel as fully read for the authenticated user (POST /channels/members/me/view).",
-  inputSchema: z.object({
-    channel_id: z.string().describe("Channel ID to mark as read."),
-  }),
+  inputSchema: z
+    .object({
+      channel_id: routeSegment.describe("Channel ID to mark as read."),
+    })
+    .strict(),
   write: true,
   resources: (args) => ({ channelId: args.channel_id }),
   handler: (args, { session }) => session.call((c) => c.viewMyChannel(args.channel_id)),
