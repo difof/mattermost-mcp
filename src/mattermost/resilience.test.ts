@@ -5,7 +5,9 @@ import {
   isRetryableStatus,
   isRetryableError,
   withRetry,
+  applyRequestResilience,
   applyRequestTimeout,
+  runClientRequest,
   type ResilienceConfig,
 } from "./resilience.js";
 
@@ -97,6 +99,31 @@ describe("withRetry", () => {
       status_code: 404,
     });
     expect(fn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("trusted operation retry policy", () => {
+  it.each([
+    { method: "GET", retrySafe: false, calls: 1 },
+    { method: "POST", retrySafe: true, calls: 2 },
+  ])("uses retrySafe=$retrySafe for a $method request", async ({ method, retrySafe, calls }) => {
+    const client = new mattermost.Client4();
+    client.setUrl("http://mm.test");
+    applyRequestResilience(client, cfg({ maxRetries: 1, baseDelayMs: 0 }));
+    const operation = vi.fn().mockRejectedValueOnce(mmError(503)).mockResolvedValue("ok");
+
+    // The caller supplies trusted operation metadata independently of the verb:
+    // v11 policy activation is a GET mutation, and bulk lookup uses POST.
+    const result = runClientRequest(
+      client,
+      "http://mm.test/api/v4/example",
+      { method },
+      operation,
+      { retrySafe },
+    );
+    if (retrySafe) await expect(result).resolves.toBe("ok");
+    else await expect(result).rejects.toMatchObject({ status_code: 503 });
+    expect(operation).toHaveBeenCalledTimes(calls);
   });
 });
 
