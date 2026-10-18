@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ME, PEER, OK, useMattermost } from "./mattermost-http-fixture.js";
-
 describe("channels, membership, and read state through the HTTP API", () => {
   const fixture = useMattermost({ guardrails: { allowDestructive: true } });
-
   it("discovers joined teams and channels, including existing personal conversations", async () => {
     const mm = fixture();
     const team = { id: "project-team", name: "project", display_name: "Project" };
@@ -28,13 +26,12 @@ describe("channels, membership, and read state through the HTTP API", () => {
     });
     expect(await mm.call("list_channels", { team_id: "empty-team" })).toEqual([]);
   });
-
   it("manages a private channel and joins/leaves a separate public channel", async () => {
     const mm = fixture();
     const args = { name: "planning", display_name: "Planning", type: "P", team_id: "project-team" };
     const channel = { ...args, id: "new-channel" };
     mm.expect("POST", "/channels", { body: args, reply: channel });
-    const created = await mm.call<typeof channel>("create_channel", args);
+    const created = await mm.call("create_channel", args);
     expect(created).toEqual(channel);
     // Creation already makes the owner a member; retain that membership to archive.
     const me = { channel_id: created.id, user_id: ME.id, roles: "channel_user channel_admin" };
@@ -70,7 +67,6 @@ describe("channels, membership, and read state through the HTTP API", () => {
     mm.expect("DELETE", `/channels/${created.id}`);
     expect(await mm.call("archive_channel", { channel_id: created.id, confirm: true })).toEqual(OK);
   });
-
   it("preserves explicit member pagination and an empty last page", async () => {
     const mm = fixture();
     mm.expect("GET", "/channels/project-channel/members", {
@@ -85,7 +81,6 @@ describe("channels, membership, and read state through the HTTP API", () => {
       }),
     ).toEqual([]);
   });
-
   it("uses actual unread counts, marks the owner's channel read, and handles no memberships", async () => {
     const mm = fixture();
     const memberships = [
@@ -116,7 +111,6 @@ describe("channels, membership, and read state through the HTTP API", () => {
     mm.expect("GET", "/users/me/teams/empty-team/channels/members", { reply: [] });
     expect(await mm.call("get_unreads", { team_id: "empty-team" })).toEqual([]);
   });
-
   it("filters joined-team/channel results to configured resources", async () => {
     const mm = fixture();
     mm.guardrails.teamAllowlist = ["project-team"];
@@ -135,7 +129,6 @@ describe("channels, membership, and read state through the HTTP API", () => {
     });
     expect(await mm.call("list_channels", { team_id: team.id })).toEqual([allowed]);
   });
-
   it("does not query unread counts for a channel outside the allowlist", async () => {
     const mm = fixture();
     mm.guardrails.channelAllowlist = ["project-channel"];
@@ -146,7 +139,6 @@ describe("channels, membership, and read state through the HTTP API", () => {
     mm.expect("GET", "/users/me/channels/project-channel/unread", { reply: unread });
     expect(await mm.call("get_unreads", { team_id: "project-team" })).toEqual([unread]);
   });
-
   it("surfaces a private-channel membership refusal without retrying the write", async () => {
     const mm = fixture();
     mm.expect("POST", "/channels/private-channel/members", {
