@@ -141,7 +141,10 @@ const getThread = defineTool({
   }),
   resources: (args) => ({ postId: args.post_id }),
   resultScope: "posts",
-  handler: (args, { session }) => session.call((c) => c.getPostThread(args.post_id)),
+  // Client4.getPostThread now defaults to a 60-post page. Omitting perPage via
+  // fetchAll preserves this tool's full-thread contract on Mattermost v11.
+  handler: (args, { session }) =>
+    session.call((c) => c.getPaginatedPostThread(args.post_id, { fetchAll: true })),
 });
 
 // ---------------------------------------------------------------------------
@@ -167,7 +170,7 @@ const searchPosts = defineTool({
   title: "Search posts",
   description: "Search for posts in a team (POST /teams/{id}/posts/search).",
   inputSchema: z.object({
-    team_id: z.string().describe("Team id to search within."),
+    team_id: z.string().min(1).describe("Team id to search within."),
     terms: z.string().describe("Search terms."),
     is_or_search: z
       .boolean()
