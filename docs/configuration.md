@@ -98,7 +98,7 @@ running; in production pass them directly to the process. The [`.env.example`](.
 | `MM_LOGIN_ID`       | when `password` | —                                | Username or email.                                                                                                                                         |
 | `MM_PASSWORD`       | when `password` | —                                | Password.                                                                                                                                                  |
 | `MM_MFA_TOKEN`      | no              | —                                | MFA one-time code (only if the account enforces MFA).                                                                                                      |
-| `MM_CLIENT_ID`      | when `oauth2`   | —                                | OAuth2 app client id (register in System Console → Integrations → OAuth 2.0 Applications).                                                                 |
+| `MM_CLIENT_ID`      | when `oauth2`   | —                                | OAuth2 app client id (register in Product menu → Integrations → OAuth 2.0 Applications).                                                                   |
 | `MM_CLIENT_SECRET`  | when `oauth2`   | —                                | OAuth2 app client secret.                                                                                                                                  |
 | `MM_OAUTH_REDIRECT` | no              | `http://127.0.0.1:7000/callback` | Loopback redirect URI (must start with `http://` or `https://`).                                                                                           |
 
@@ -110,11 +110,14 @@ running; in production pass them directly to the process. The [`.env.example`](.
 | `MM_MAX_RETRIES`        | no       | `3`     | Safe-read retries on `429` / `5xx` / network errors with exponential back-off + jitter. |
 | `MM_RETRY_BASE_MS`      | no       | `500`   | Back-off base delay in ms.                                                              |
 
-Retries apply to individual GET/HEAD/OPTIONS requests and the verified read-only user/post search
-endpoints. Other POST/PUT/DELETE requests are attempted once on transient failures, preventing
-automatic duplicate sends after a lost response. Password/OAuth authentication can still recover
-from a rejected `401` and retry that individual request. A timeout or lost response to a write means
-its outcome is unknown; check the conversation before sending the same message again.
+Retries apply to individual requests classified as safe reads. Convenience tools use the verified
+SDK read routes; the generic API uses [operation-specific policy](../src/api/policy.js), including
+audited POST searches/lookups. Mutating GET operations such as policy activation, post reveal and
+system ping do not receive transient retries. Writes are attempted once on transient failures,
+preventing automatic duplicate sends after a lost response. Password/OAuth authentication can
+still recover from an explicit `401` rejection and retry that individual request. A timeout or
+lost response to a write means its outcome is unknown; check the conversation before sending
+the same message again.
 
 ## Authentication Modes
 
@@ -127,7 +130,9 @@ MM_AUTH_MODE=pat
 MM_TOKEN=your-personal-access-token
 ```
 
-No expiry; revocable at any time; simplest setup.
+Expiration depends on the token and server policy. Revoked or expired tokens require updating
+the saved login. The pinned v11.11.1 API supports token expiry and a maximum-lifetime policy;
+see its [token API definitions](https://github.com/mattermost/mattermost/blob/3acb3a7f684d11ccfcec4e5bd11c79f64e3eabf9/api/v4/source/users.yaml).
 
 ### password
 
@@ -143,8 +148,11 @@ and automatically re-authenticates on a `401`.
 
 ### oauth2
 
-Register a **confidential** OAuth2 application in **System Console → Integrations → OAuth 2.0
-Applications** with a loopback redirect URI (`http://127.0.0.1:7000/callback` by default), then:
+Register a **confidential** OAuth2 application in **Product menu → Integrations → OAuth 2.0
+Applications** with a loopback redirect URI (`http://127.0.0.1:7000/callback` by default).
+An administrator must first enable the provider under **System Console → Integrations →
+Integration Management**; see the [official OAuth setup guide](https://docs.mattermost.com/developers/integrate/apps/authentication/oauth2).
+Then configure:
 
 ```bash
 MM_AUTH_MODE=oauth2
@@ -164,20 +172,22 @@ permissions and refreshed transparently thereafter.
 
 ### Controls
 
-| Variable                    | Effect                                                                                |
-| --------------------------- | ------------------------------------------------------------------------------------- |
-| `MM_READ_ONLY=true`         | Every ⚠️ and 💥 tool hard-refuses at call time. Tools remain visible in `tools/list`. |
-| `MM_ALLOW_DESTRUCTIVE=true` | Required to unlock the 💥 tools.                                                      |
-| `MM_TEAM_ALLOWLIST`         | CSV of permitted team ids; calls targeting other teams are refused.                   |
-| `MM_CHANNEL_ALLOWLIST`      | CSV of permitted channel ids; calls targeting other channels are refused.             |
-| `MM_MAX_MESSAGE_LEN`        | Messages exceeding this length (Unicode code points) are rejected before sending.     |
+| Variable                    | Effect                                                                                                |
+| --------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `MM_READ_ONLY=true`         | Mutations hard-refuse at call time. `api_call` evaluates the selected operation; reads remain usable. |
+| `MM_ALLOW_DESTRUCTIVE=true` | Required to unlock the 💥 tools.                                                                      |
+| `MM_TEAM_ALLOWLIST`         | CSV of permitted team ids; calls targeting other teams are refused.                                   |
+| `MM_CHANNEL_ALLOWLIST`      | CSV of permitted channel ids; calls targeting other channels are refused.                             |
+| `MM_MAX_MESSAGE_LEN`        | Messages exceeding this length (Unicode code points) are rejected before sending.                     |
 
 ### Rules
 
-- Destructive tools (`delete_post`, `archive_channel`, `remove_member`) require **both**
+- Destructive tools (`delete_post`, `archive_channel`, `remove_member`) and generic destructive
+  API operations require **both**
   `MM_ALLOW_DESTRUCTIVE=true` in the environment **and** an explicit `confirm: true` argument in
   the tool call.
-- `MM_READ_ONLY=true` takes precedence over `MM_ALLOW_DESTRUCTIVE`; all ⚠️/💥 tools refuse.
+- `MM_READ_ONLY=true` takes precedence over `MM_ALLOW_DESTRUCTIVE`; mutating convenience tools
+  and API operations refuse.
 - Allowlists apply to resolved channel/team IDs, including post IDs, file IDs, and attachments.
   Team/channel listings and post searches filter their results accordingly.
 - With an allowlist configured, post responses omit permalink preview metadata, which can contain
@@ -187,6 +197,26 @@ permissions and refreshed transparently thereafter.
 - DMs/group DMs have no team and are excluded by a team allowlist. Use a channel allowlist to
   restrict access to selected existing conversations.
 - Mattermost API errors (status code + message) are surfaced verbatim — never swallowed.
+
+### Full-API operations
+
+`api_search` and `api_describe` are local lookups. `api_call` uses the existing configured account;
+no new credentials or enable flag are needed. Account roles, membership, licenses and feature
+settings still govern every server response.
+
+The generic executor is blocked when either resource allowlist is set. This preserves their
+boundary across administrative operations, arbitrary response shapes and indirect resources.
+Use the existing scoped convenience tools in that configuration.
+
+Generic API writes use operation-specific policy: audited POST reads remain usable in read-only
+mode; GET policy activation, post reveal and system ping are treated as writes. All generic DELETE calls,
+security/configuration changes and other destructive mutations need the existing destructive
+double-lock. The MCP annotation for `api_call` is conservatively write/destructive because the
+same tool can invoke those operations; runtime checks use the actual selected operation.
+
+API results default to a 1 MiB decoded-byte limit and compact JSON. `max_bytes` can increase that
+limit explicitly. Redirects are returned without being followed, and credentials cannot be
+overridden with request headers. See the [API interface](tools.md#request-and-response-interface).
 
 ## PAT permissions
 
