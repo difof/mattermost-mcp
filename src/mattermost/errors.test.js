@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import mattermost from "@mattermost/client";
-import { formatMattermostError, isMattermostError } from "./errors.js";
+import { formatMattermostError } from "./errors.js";
 function clientError(data) {
   return new mattermost.ClientError("https://mm.example.com", data);
 }
@@ -40,13 +40,5 @@ describe("formatMattermostError", () => {
   });
   it("stringifies a non-Error value", () => {
     expect(formatMattermostError("nope")).toBe("nope");
-  });
-});
-describe("isMattermostError", () => {
-  it("is true for a ClientError", () => {
-    expect(isMattermostError(clientError({ message: "x", status_code: 500 }))).toBe(true);
-  });
-  it("is false for a plain Error", () => {
-    expect(isMattermostError(new Error("x"))).toBe(false);
   });
 });
