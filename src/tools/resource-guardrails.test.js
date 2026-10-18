@@ -11,7 +11,7 @@ function fixture(guardrails = {}) {
     getChannel: vi.fn(async () => ({ id: "allowed", team_id: "team1" })),
     getPost: vi.fn(async () => ({ id: "post1", channel_id: "blocked" })),
     getPaginatedPostThread: vi.fn(),
-    patchPost: vi.fn(async () => ({ id: "post1", message: "updated" })),
+    patchPost: vi.fn(async () => ({ id: "post1", channel_id: "allowed", message: "updated" })),
     deletePost: vi.fn(),
     pinPost: vi.fn(),
     unpinPost: vi.fn(),
@@ -106,6 +106,33 @@ describe("resolved resource allowlists", () => {
     expect(result.isError).toBeUndefined();
     expect(client.patchPost).toHaveBeenCalledTimes(1);
     expect(client.patchPost).toHaveBeenCalledWith({ id: "post1", message: "updated" });
+  });
+  it("checks the returned post when it moved outside the allowlist after preflight", async () => {
+    const { client, call } = fixture();
+    client.getPost.mockResolvedValue({ id: "post1", channel_id: "allowed" });
+    client.patchPost.mockResolvedValue({
+      id: "post1",
+      channel_id: "blocked",
+      message: "content outside the permitted channel",
+    });
+    const result = await call("edit_post", { post_id: "post1", message: "updated" });
+    expect(result.isError).toBe(true);
+    expect(body(result)).toContain("MM_CHANNEL_ALLOWLIST");
+    expect(body(result)).not.toContain("content outside the permitted channel");
+  });
+  it.each([
+    ["get_post", { post_id: "post1" }, "getPost"],
+    ["get_channel", { channel_id: "allowed" }, "getChannel"],
+    ["get_file_metadata", { file_id: "f1" }, "file"],
+  ])("reuses %s preflight data only within the current tool call", async (name, args, method) => {
+    const { client, call } = fixture({ teamAllowlist: ["team1"] });
+    client.getPost.mockResolvedValue({ id: "post1", channel_id: "allowed" });
+    vi.mocked(fetchFileMetadata).mockResolvedValue({ id: "f1", channel_id: "allowed" });
+    const read = method === "file" ? fetchFileMetadata : client[method];
+    expect((await call(name, args)).isError).toBeUndefined();
+    expect(read).toHaveBeenCalledTimes(1);
+    expect((await call(name, args)).isError).toBeUndefined();
+    expect(read).toHaveBeenCalledTimes(2);
   });
   it("does not introduce resource lookups when no allowlists are configured", async () => {
     const { client, call } = fixture({ channelAllowlist: [] });
@@ -222,12 +249,13 @@ describe("resolved resource allowlists", () => {
       client.getPaginatedPostThread.mockResolvedValue(list);
       Object.assign(client, { getPosts: vi.fn(async () => list) });
       client.searchPosts.mockResolvedValue(list);
-      const result = await call(name, {
-        post_id: "p1",
-        channel_id: "allowed",
-        team_id: "team1",
-        terms: "link",
-      });
+      const args =
+        name === "get_post" || name === "get_thread"
+          ? { post_id: "p1" }
+          : name === "get_channel_posts"
+            ? { channel_id: "allowed" }
+            : { team_id: "team1", terms: "link" };
+      const result = await call(name, args);
       expect(result.isError).toBeUndefined();
       expect(body(result)).not.toContain("private linked message");
       expect(body(result)).toContain("image.png");
