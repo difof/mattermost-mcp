@@ -8,8 +8,8 @@ import type { MattermostSession } from "./types.js";
 import { acquireOAuthToken, refreshOAuthToken, type OAuthTokens } from "./oauth.js";
 import { formatMattermostError } from "./errors.js";
 import {
-  withRetry,
   applyRequestTimeout,
+  applyRequestResilience,
   DEFAULT_RESILIENCE,
   type ResilienceConfig,
 } from "./resilience.js";
@@ -28,6 +28,20 @@ export function buildClient(url: string, timeoutMs: number): Client4 {
   // Abort any request that exceeds the configured timeout.
   applyRequestTimeout(client, timeoutMs);
   return client;
+}
+
+/** Use the SDK transport for verified API routes without a named Client4 method. */
+export function doClientFetch<T>(
+  client: Client4,
+  url: string,
+  options: Parameters<Client4["getOptions"]>[0],
+): Promise<T> {
+  // doFetch is protected in the SDK declarations, but available at runtime.
+  // Keep the adaptation at the client boundary, including request resilience.
+  const transport = client as unknown as {
+    doFetch: <R>(url: string, options: Parameters<Client4["getOptions"]>[0]) => Promise<R>;
+  };
+  return transport.doFetch<T>(url, options);
 }
 
 /**
@@ -64,20 +78,32 @@ export async function createSession(config: Config): Promise<MattermostSession> 
   }
 
   // Recover from a 401 in-flight: re-login (password) or refresh (oauth2).
-  async function recover(): Promise<void> {
+  async function recover(): Promise<boolean> {
     if (auth.mode === "password") {
       log("session token expired (401) — re-authenticating");
       await client.login(auth.loginId, auth.password, auth.mfaToken ?? "");
-      return;
+      return true;
     }
-    if (auth.mode === "oauth2" && oauthTokens) {
+    if (auth.mode === "oauth2" && oauthTokens?.refreshToken) {
       log("access token expired (401) — refreshing");
       oauthTokens = await refreshOAuthToken(url, auth, oauthTokens);
       client.setToken(oauthTokens.accessToken);
-      return;
+      return true;
     }
-    throw new Error("authentication is not recoverable in this mode");
+    return false;
   }
+
+  // Concurrent requests can encounter the same expired token. Share one login
+  // or refresh so rotating refresh tokens are not redeemed more than once.
+  let recovery: Promise<boolean> | undefined;
+  const recoverAuthentication = (): Promise<boolean> => {
+    if (!recovery) {
+      recovery = recover().finally(() => {
+        recovery = undefined;
+      });
+    }
+    return recovery;
+  };
 
   // Fail fast with an actionable message instead of a raw API error dump.
   let me: Awaited<ReturnType<Client4["getMe"]>>;
@@ -91,30 +117,14 @@ export async function createSession(config: Config): Promise<MattermostSession> 
     );
   }
   log(`authenticated as @${me.username} (${me.id}) via ${auth.mode}`);
+  applyRequestResilience(client, resilience, recoverAuthentication);
 
   return {
     client,
     config,
     userId: me.id,
-    async call<T>(fn: (c: Client4) => Promise<T>): Promise<T> {
-      // One auth recovery (401 → re-login/refresh) wrapped in transient-retry
-      // (429 / 5xx / network) with exponential backoff.
-      const attempt = async (): Promise<T> => {
-        try {
-          return await fn(client);
-        } catch (err) {
-          const is401 = err instanceof mattermost.ClientError && err.status_code === 401;
-          const recoverable =
-            is401 &&
-            (auth.mode === "password" ||
-              (auth.mode === "oauth2" && oauthTokens?.refreshToken != null));
-          if (!recoverable) throw err;
-
-          await recover();
-          return await fn(client);
-        }
-      };
-      return withRetry(attempt, resilience);
-    },
+    // Never replay a callback: it may have already completed a successful write
+    // before a later request fails. Retry/auth recovery live in the transport.
+    call: async <T>(fn: (c: Client4) => Promise<T>): Promise<T> => fn(client),
   };
 }

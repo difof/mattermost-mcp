@@ -3,8 +3,9 @@ import type { Config } from "../config.js";
 
 /**
  * An authenticated Mattermost context shared by every tool handler.
- * `call` wraps a Client4 invocation with auth-failure recovery
- * (password mode re-logins once on a 401).
+ * `call` executes its callback exactly once. The client's HTTP transport retries
+ * safe reads and recovers authentication per request, without replaying writes
+ * after an ambiguous network/server failure or a later callback failure.
  */
 export interface MattermostSession {
   readonly client: Client4;

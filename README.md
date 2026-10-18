@@ -7,8 +7,9 @@ Client4 (REST v4). It authenticates to a **self-hosted** Mattermost instance and
 via a configurable guardrail layer; all output goes to stdout (the MCP channel) and all logging goes
 to stderr.
 
-> **Self-hosted only.** Mattermost Cloud does not expose the REST v4 endpoints used here; you need
-> a self-managed Mattermost server (any recent version supporting REST v4).
+This is [difof's fork](https://github.com/difof/mattermost-mcp) of
+[BryanBerger98/mattermost-mcp](https://github.com/BryanBerger98/mattermost-mcp), with fixes for
+personal-account automation. It targets Mattermost servers exposing REST API v4.
 
 ## Features
 
@@ -19,8 +20,8 @@ to stderr.
 - **Safe by default** — read-only mode (`MM_READ_ONLY`), destructive-action gate
   (`MM_ALLOW_DESTRUCTIVE`), team/channel allowlists, and per-call `confirm: true` requirement for
   destructive tools.
-- **Resilience** — configurable request timeout, retry with exponential back-off + jitter on `429` /
-  `5xx` / network errors.
+- **Resilience** — configurable request timeout, with exponential back-off + jitter for safe reads
+  on `429` / `5xx` / network errors. Mutations are not automatically repeated after ambiguous failures.
 - **Strict validation** — every tool input is validated with a Zod schema before any API call.
   Mattermost errors are surfaced verbatim (status code + message).
 
@@ -32,25 +33,29 @@ to stderr.
 
 ## Install
 
-### Global (recommended)
+### Build this fork
 
 ```bash
-npm i -g @bryanberger/mattermost-mcp
-mattermost-mcp login        # interactive: server URL + auth, saved to the config dir
-mattermost-mcp status       # verify: prints the authenticated identity
+git clone --branch master https://github.com/difof/mattermost-mcp.git
+cd mattermost-mcp
+npm ci
+npm run build
+node dist/index.js login    # interactive: server URL + auth, saved to the config dir
+node dist/index.js status   # verify: prints the authenticated identity
 ```
 
 `login` validates the credentials against the server and writes them (0600) under
 `$XDG_CONFIG_HOME/mattermost-mcp` (or `~/.config/mattermost-mcp`). The MCP server then picks them up
 automatically — no env vars required. See [CLI](#cli) and [Authenticate with `login`](#authenticate-with-login).
 
-### From source
+For a global `mattermost-mcp` command, link the built checkout:
 
 ```bash
-npm install
-npm run build
-# Binary is now at dist/index.js (also available as mattermost-mcp via the bin field)
+npm link
 ```
+
+The npm package `@bryanberger/mattermost-mcp` is published by upstream. Use the source checkout
+above for this fork's fixes; its inherited release workflow is disabled outside the upstream repository.
 
 ## CLI
 
@@ -122,6 +127,10 @@ Credentials come from two sources, in order of precedence:
 1. **Environment variables** (`MM_*`) — always win; ideal for CI and the `examples/` MCP client configs.
 2. **Saved `login` credentials** — the baseline when the matching env vars are absent.
 
+Blank environment values count as unset. Saved credentials are tied to their server URL: changing
+`MM_URL` to a different origin or subpath requires credentials for that server instead of reusing the
+saved token or password.
+
 In development you can place env vars in a `.env` file in the project root and export them before
 running; in production pass them directly to the process. A fully annotated `.env.example` ships in
 the repository. Every setting below is also configurable via env.
@@ -159,11 +168,17 @@ the repository. Every setting below is also configurable via env.
 
 #### Resilience
 
-| Variable                | Required | Default | Description                                                                   |
-| ----------------------- | -------- | ------- | ----------------------------------------------------------------------------- |
-| `MM_REQUEST_TIMEOUT_MS` | no       | `30000` | Per-request timeout in ms (`0` disables).                                     |
-| `MM_MAX_RETRIES`        | no       | `3`     | Retries on `429` / `5xx` / network errors with exponential back-off + jitter. |
-| `MM_RETRY_BASE_MS`      | no       | `500`   | Back-off base delay in ms.                                                    |
+| Variable                | Required | Default | Description                                                                             |
+| ----------------------- | -------- | ------- | --------------------------------------------------------------------------------------- |
+| `MM_REQUEST_TIMEOUT_MS` | no       | `30000` | Per-request timeout in ms (`0` disables).                                               |
+| `MM_MAX_RETRIES`        | no       | `3`     | Safe-read retries on `429` / `5xx` / network errors with exponential back-off + jitter. |
+| `MM_RETRY_BASE_MS`      | no       | `500`   | Back-off base delay in ms.                                                              |
+
+Retries apply to individual GET/HEAD/OPTIONS requests and the verified read-only user/post search
+endpoints. Other POST/PUT/DELETE requests are attempted once on transient failures, preventing
+automatic duplicate sends after a lost response. Password/OAuth authentication can still recover
+from a rejected `401` and retry that individual request. A timeout or lost response to a write means
+its outcome is unknown; check the conversation before sending the same message again.
 
 ## Authentication Modes
 
@@ -232,6 +247,11 @@ Legend: ⚠️ = write (blocked by `MM_READ_ONLY=true`) · 💥 = destructive (r
 | `add_reaction` ⚠️    | Add an emoji reaction (as the authenticated user).                                  |
 | `remove_reaction` ⚠️ | Remove an emoji reaction.                                                           |
 
+For `get_channel_posts`, `before` and `after` are mutually exclusive. `since` retrieves modified posts
+and cannot be combined with either cursor or `page`/`per_page`; the server caps that response at
+1,000 posts, so use paginated history for a complete backfill. For `send_dm`, supply only distinct
+IDs of the other participants (one for a DM, two to seven for a group).
+
 ### Channels & Teams (12)
 
 | Tool                   | Description                                     |
@@ -248,6 +268,9 @@ Legend: ⚠️ = write (blocked by `MM_READ_ONLY=true`) · 💥 = destructive (r
 | `remove_member` 💥     | Remove another user from a channel.             |
 | `get_unreads`          | Per-channel unread/mention counts for a team.   |
 | `mark_channel_read` ⚠️ | Mark a channel as viewed.                       |
+
+`get_unreads` returns the server's unread counts, not the membership's already-read message
+baseline. It makes one membership request plus one unread-count request per permitted channel.
 
 ### Users & Presence (6)
 
@@ -286,7 +309,14 @@ Legend: ⚠️ = write (blocked by `MM_READ_ONLY=true`) · 💥 = destructive (r
   `MM_ALLOW_DESTRUCTIVE=true` in the environment **and** an explicit `confirm: true` argument in
   the tool call.
 - `MM_READ_ONLY=true` takes precedence over `MM_ALLOW_DESTRUCTIVE`; all ⚠️/💥 tools refuse.
-- Allowlists are checked against the resolved team/channel id for the call, not a display name.
+- Allowlists apply to resolved channel/team IDs, including post IDs, file IDs, and attachments.
+  Team/channel listings and post searches filter their results accordingly.
+- With an allowlist configured, post responses omit permalink preview metadata, which can contain
+  another channel's full message. The original message text and links remain available.
+- A channel allowlist blocks `create_channel` and `send_dm`, since they open a channel before its ID
+  can be checked. Send to an existing permitted DM/group channel with `post_message` instead.
+- DMs/group DMs have no team and are excluded by a team allowlist. Use a channel allowlist to
+  restrict access to selected existing conversations.
 - Mattermost API errors (status code + message) are surfaced verbatim — never swallowed.
 
 ## Register in an MCP Client

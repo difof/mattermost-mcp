@@ -16,7 +16,12 @@ const postMessage = defineTool({
     props: z.record(z.unknown()).optional().describe("Custom post properties."),
   }),
   write: true,
-  resources: (args) => ({ channelId: args.channel_id }),
+  resources: (args) => ({
+    channelId: args.channel_id,
+    postId: args.root_id || undefined,
+    fileIds: args.file_ids,
+  }),
+  resultScope: "post",
   messageText: (args) => args.message,
   handler: (args, { session }) =>
     session.call((c) =>
@@ -43,7 +48,8 @@ const replyThread = defineTool({
     message: z.string().describe("Reply text."),
   }),
   write: true,
-  resources: (args) => ({ channelId: args.channel_id }),
+  resources: (args) => ({ channelId: args.channel_id, postId: args.root_id }),
+  resultScope: "post",
   messageText: (args) => args.message,
   handler: (args, { session }) =>
     session.call((c) =>
@@ -62,34 +68,51 @@ const getChannelPosts = defineTool({
   name: "get_channel_posts",
   title: "Get channel posts",
   description: "Fetch posts from a channel (GET /channels/{id}/posts).",
-  inputSchema: z.object({
-    channel_id: z.string().describe("Channel id."),
-    page: z.number().int().nonnegative().default(0).optional().describe("Page index (default 0)."),
-    per_page: z
-      .number()
-      .int()
-      .positive()
-      .default(60)
-      .optional()
-      .describe("Results per page (default 60)."),
-    since: z
-      .number()
-      .int()
-      .nonnegative()
-      .optional()
-      .describe(
-        "Unix timestamp in ms — return posts after this time (mutually exclusive with before/after).",
-      ),
-    before: z
-      .string()
-      .optional()
-      .describe("Post id — return posts before this one (mutually exclusive with since/after)."),
-    after: z
-      .string()
-      .optional()
-      .describe("Post id — return posts after this one (mutually exclusive with since/before)."),
-  }),
+  inputSchema: z
+    .object({
+      channel_id: z.string().describe("Channel id."),
+      page: z.number().int().nonnegative().optional().describe("Page index (default 0)."),
+      per_page: z.number().int().positive().optional().describe("Results per page (default 60)."),
+      since: z
+        .number()
+        .int()
+        .nonnegative()
+        .optional()
+        .describe(
+          "Unix timestamp in ms — return posts modified since this time, up to 1000. Cannot be combined with before, after, page, or per_page; results may have gaps.",
+        ),
+      before: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Post id — return posts before this one (mutually exclusive with since/after)."),
+      after: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Post id — return posts after this one (mutually exclusive with since/before)."),
+    })
+    .superRefine((args, ctx) => {
+      if (
+        args.since != null &&
+        (args.before != null || args.after != null || args.page != null || args.per_page != null)
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["since"],
+          message: "since cannot be combined with before, after, page, or per_page",
+        });
+      }
+      if (args.before != null && args.after != null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["after"],
+          message: "before and after are mutually exclusive",
+        });
+      }
+    }),
   resources: (args) => ({ channelId: args.channel_id }),
+  resultScope: "posts",
   handler: (args, { session }) => {
     const page = args.page ?? 0;
     const perPage = args.per_page ?? 60;
@@ -116,6 +139,8 @@ const getThread = defineTool({
   inputSchema: z.object({
     post_id: z.string().describe("Root post id."),
   }),
+  resources: (args) => ({ postId: args.post_id }),
+  resultScope: "posts",
   handler: (args, { session }) => session.call((c) => c.getPostThread(args.post_id)),
 });
 
@@ -129,6 +154,8 @@ const getPost = defineTool({
   inputSchema: z.object({
     post_id: z.string().describe("Post id."),
   }),
+  resources: (args) => ({ postId: args.post_id }),
+  resultScope: "post",
   handler: (args, { session }) => session.call((c) => c.getPost(args.post_id)),
 });
 
@@ -149,6 +176,7 @@ const searchPosts = defineTool({
       .describe("Use OR logic between terms (default false)."),
   }),
   resources: (args) => ({ teamId: args.team_id }),
+  resultScope: "posts",
   handler: (args, { session }) =>
     session.call((c) => c.searchPosts(args.team_id, args.terms, args.is_or_search ?? false)),
 });
@@ -165,6 +193,8 @@ const editPost = defineTool({
     message: z.string().describe("New message text."),
   }),
   write: true,
+  resources: (args) => ({ postId: args.post_id }),
+  resultScope: "post",
   messageText: (args) => args.message,
   handler: (args, { session }) =>
     session.call((c) => c.patchPost({ id: args.post_id, message: args.message })),
@@ -176,12 +206,13 @@ const editPost = defineTool({
 const deletePost = defineTool({
   name: "delete_post",
   title: "Delete post",
-  description: "Permanently delete a post (DELETE /posts/{id}).",
+  description: "Delete a post (soft delete; DELETE /posts/{id}).",
   inputSchema: z.object({
     post_id: z.string().describe("Post id to delete."),
     confirm: z.boolean().optional().describe("Must be true to authorize this destructive action."),
   }),
   destructive: true,
+  resources: (args) => ({ postId: args.post_id }),
   handler: (args, { session }) => session.call((c) => c.deletePost(args.post_id)),
 });
 
@@ -195,15 +226,28 @@ const sendDm = defineTool({
     "Open a direct (2-person) or group (3–8 person) channel and send a message (POST /channels/direct | /channels/group + POST /posts).",
   inputSchema: z.object({
     user_ids: z
-      .array(z.string())
+      .array(z.string().min(1))
       .min(1)
       .max(7)
-      .describe("The OTHER participants (1 for DM, 2–7 for group)."),
+      .refine(
+        (ids) => new Set(ids).size === ids.length,
+        "user_ids must contain unique participants",
+      )
+      .describe(
+        "The OTHER participants, without duplicates or yourself (1 for DM, 2–7 for group).",
+      ),
     message: z.string().describe("Message text."),
   }),
   write: true,
+  resources: () => ({ createsChannel: true }),
+  resultScope: "post",
   messageText: (args) => args.message,
   handler: async (args, { session }) => {
+    if (args.user_ids.includes(session.userId)) {
+      throw new Error(
+        "invalid arguments for send_dm: user_ids must contain only other participants, not the authenticated user",
+      );
+    }
     const members = [session.userId, ...args.user_ids];
     const channel = await session.call((c) =>
       members.length === 2 ? c.createDirectChannel(members) : c.createGroupChannel(members),
@@ -223,6 +267,7 @@ const pinPost = defineTool({
     post_id: z.string().describe("Post id to pin."),
   }),
   write: true,
+  resources: (args) => ({ postId: args.post_id }),
   handler: (args, { session }) => session.call((c) => c.pinPost(args.post_id)),
 });
 
@@ -237,6 +282,7 @@ const unpinPost = defineTool({
     post_id: z.string().describe("Post id to unpin."),
   }),
   write: true,
+  resources: (args) => ({ postId: args.post_id }),
   handler: (args, { session }) => session.call((c) => c.unpinPost(args.post_id)),
 });
 
@@ -252,6 +298,7 @@ const addReaction = defineTool({
     emoji_name: z.string().describe("Emoji name without colons (e.g. thumbsup)."),
   }),
   write: true,
+  resources: (args) => ({ postId: args.post_id }),
   handler: (args, { session }) =>
     session.call((c) => c.addReaction(session.userId, args.post_id, args.emoji_name)),
 });
@@ -269,6 +316,7 @@ const removeReaction = defineTool({
     emoji_name: z.string().describe("Emoji name without colons (e.g. thumbsup)."),
   }),
   write: true,
+  resources: (args) => ({ postId: args.post_id }),
   handler: (args, { session }) =>
     session.call((c) => c.removeReaction(session.userId, args.post_id, args.emoji_name)),
 });

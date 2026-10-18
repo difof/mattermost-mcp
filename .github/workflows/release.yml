@@ -2,7 +2,7 @@ name: Release
 
 on:
   push:
-    branches: [main]
+    branches: [master]
 
 # Serialize releases so two pushes can't open competing Version PRs.
 concurrency:
@@ -16,6 +16,8 @@ permissions:
 
 jobs:
   release:
+    # This fork builds from source; the inherited npm package belongs to upstream.
+    if: github.repository == 'BryanBerger98/mattermost-mcp'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

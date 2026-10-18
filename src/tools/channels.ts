@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { doClientFetch } from "../mattermost/client.js";
 import { defineTool, type AnyToolDef } from "./registry.js";
 
 // ── 1. list_teams ────────────────────────────────────────────────────────────
@@ -9,6 +10,7 @@ const listTeams = defineTool({
   description:
     "Return all Mattermost teams the authenticated user belongs to (GET /users/me/teams).",
   inputSchema: z.object({}),
+  resultScope: "teams",
   handler: (_args, { session }) => session.call((c) => c.getMyTeams()),
 });
 
@@ -23,6 +25,7 @@ const listChannels = defineTool({
     team_id: z.string().describe("Team ID to list channels for."),
   }),
   resources: (args) => ({ teamId: args.team_id }),
+  resultScope: "channels",
   handler: (args, { session }) => session.call((c) => c.getMyChannels(args.team_id)),
 });
 
@@ -52,7 +55,7 @@ const createChannel = defineTool({
     team_id: z.string().describe("Team ID in which to create the channel."),
   }),
   write: true,
-  resources: (args) => ({ teamId: args.team_id }),
+  resources: (args) => ({ teamId: args.team_id, createsChannel: true }),
   handler: (args, { session }) =>
     session.call((c) =>
       c.createChannel({
@@ -171,18 +174,37 @@ const getUnreads = defineTool({
   name: "get_unreads",
   title: "Get channel unreads",
   description:
-    "Return unread counts per channel for the authenticated user in a team (GET /users/me/teams/{tid}/channels/members).",
+    "Return unread counts per channel for the authenticated user in a team (GET /users/me/teams/{tid}/channels/members, then GET /users/me/channels/{id}/unread).",
   inputSchema: z.object({
     team_id: z.string().describe("Team ID to query."),
   }),
   resources: (args) => ({ teamId: args.team_id }),
+  resultScope: "channelItems",
   handler: async (args, { session }) => {
     const memberships = await session.call((c) => c.getMyChannelMembers(args.team_id));
-    return memberships.map((m) => ({
-      channel_id: m.channel_id,
-      msg_count: m.msg_count,
-      mention_count: m.mention_count,
-    }));
+    const { channelAllowlist } = session.config.guardrails;
+    const allowedMemberships = memberships.filter(
+      (m) => channelAllowlist.length === 0 || channelAllowlist.includes(m.channel_id),
+    );
+    const unreads = [];
+    for (const membership of allowedMemberships) {
+      // Membership.msg_count counts posts already read. Ask the unread endpoint
+      // for actual unread counts; Client4 11.6 has no dedicated method for it.
+      // https://docs.mattermost.com/api/reference/get-channel-unread
+      const unread = await session.call((c) =>
+        doClientFetch<{ channel_id: string; msg_count: number; mention_count: number }>(
+          c,
+          `${c.getUserRoute("me")}/channels/${encodeURIComponent(membership.channel_id)}/unread`,
+          { method: "get" },
+        ),
+      );
+      unreads.push({
+        channel_id: unread.channel_id,
+        msg_count: unread.msg_count,
+        mention_count: unread.mention_count,
+      });
+    }
+    return unreads;
   },
 });
 

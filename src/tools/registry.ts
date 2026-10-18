@@ -16,11 +16,10 @@ import { formatMattermostError } from "../mattermost/errors.js";
 import {
   GuardrailError,
   assertWriteAllowed,
-  assertTeamAllowed,
-  assertChannelAllowed,
   assertMessageWithinLimit,
   type ToolGuard,
 } from "../guardrails.js";
+import { ResourceGuard, type ResultScope, type ToolResources } from "../resource-guardrails.js";
 
 /** Shared, authenticated context passed to every handler. */
 export interface ToolContext {
@@ -37,8 +36,10 @@ export interface ToolDef<S extends ZodTypeAny = ZodTypeAny> {
   write?: boolean;
   /** Destructive (needs MM_ALLOW_DESTRUCTIVE + confirm:true). Implies write. */
   destructive?: boolean;
-  /** Resource ids (already in args) to check against the allowlists. */
-  resources?: (args: z.infer<S>) => { teamId?: string; channelId?: string };
+  /** Direct and indirect resource ids to resolve and check before the handler. */
+  resources?: (args: z.infer<S>) => ToolResources;
+  /** Filter collection results to the permitted resources. */
+  resultScope?: ResultScope;
   /** Message text to length-check before sending. */
   messageText?: (args: z.infer<S>) => string | undefined;
   handler: (args: z.infer<S>, ctx: ToolContext) => Promise<unknown>;
@@ -134,14 +135,15 @@ export async function dispatchToolCall(
       const message = tool.messageText(args);
       if (message != null) assertMessageWithinLimit(message, g);
     }
-    if (tool.resources) {
-      const { teamId, channelId } = tool.resources(args);
-      if (teamId != null) assertTeamAllowed(teamId, g);
-      if (channelId != null) assertChannelAllowed(channelId, g);
-    }
+    const resources = new ResourceGuard(ctx.session);
+    if (tool.resources) await resources.assertResources(tool.resources(args));
 
     const result = await tool.handler(args, ctx);
-    return text(formatResult(result));
+    return text(
+      formatResult(
+        tool.resultScope ? await resources.filterResult(tool.resultScope, result) : result,
+      ),
+    );
   } catch (err) {
     if (err instanceof GuardrailError) return text(err.message, true);
     // Surface Mattermost API errors verbatim; never swallow.

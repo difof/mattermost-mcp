@@ -5,13 +5,13 @@
   "type": "module",
   "license": "MIT",
   "author": "Bryan Berger <contact@bryanberger.dev>",
-  "homepage": "https://github.com/BryanBerger98/mattermost-mcp#readme",
+  "homepage": "https://github.com/difof/mattermost-mcp#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/BryanBerger98/mattermost-mcp.git"
+    "url": "git+https://github.com/difof/mattermost-mcp.git"
   },
   "bugs": {
-    "url": "https://github.com/BryanBerger98/mattermost-mcp/issues"
+    "url": "https://github.com/difof/mattermost-mcp/issues"
   },
   "keywords": [
     "mcp",

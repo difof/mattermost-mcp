@@ -14,6 +14,24 @@ describe("loadConfig — url", () => {
     const c = loadConfig({ MM_URL: "https://mm.example.com//", MM_TOKEN: "x" });
     expect(c.url).toBe("https://mm.example.com");
   });
+  it("preserves a valid deployment subpath", () => {
+    const c = loadConfig({ MM_URL: "https://mm.example.com/mattermost/", MM_TOKEN: "x" });
+    expect(c.url).toBe("https://mm.example.com/mattermost");
+  });
+  it.each([
+    "file:///tmp/mattermost",
+    "ftp://mm.example.com",
+    "https://username:password@mm.example.com",
+    "https://mm.example.com?redirect=elsewhere",
+    "https://mm.example.com#fragment",
+    "https://mm.example.com/api/v4/",
+  ])("rejects an unusable or ambiguous server root: %s", (MM_URL) => {
+    expect(() => loadConfig({ MM_URL, MM_TOKEN: "x" })).toThrow(/MM_URL/);
+  });
+  it("allows HTTP for local self-hosted servers", () => {
+    const c = loadConfig({ MM_URL: "http://127.0.0.1:8065", MM_TOKEN: "x" });
+    expect(c.url).toBe("http://127.0.0.1:8065");
+  });
 });
 
 describe("loadConfig — auth", () => {
