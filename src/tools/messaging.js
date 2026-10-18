@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { routeSegment } from "./route-params.js";
 // ---------------------------------------------------------------------------
 // post_message — POST /posts
 // ---------------------------------------------------------------------------
@@ -6,13 +7,18 @@ const postMessage = {
   name: "post_message",
   title: "Post message",
   description: "Send a new message to a channel (POST /posts).",
-  inputSchema: z.object({
-    channel_id: z.string().describe("Channel to post in."),
-    message: z.string().describe("Message text."),
-    root_id: z.string().optional().describe("Thread root post id (makes this a reply)."),
-    file_ids: z.array(z.string()).optional().describe("Attached file ids."),
-    props: z.record(z.unknown()).optional().describe("Custom post properties."),
-  }),
+  inputSchema: z
+    .object({
+      channel_id: routeSegment.describe("Channel to post in."),
+      message: z.string().describe("Message text."),
+      root_id: z
+        .union([routeSegment, z.literal("")])
+        .optional()
+        .describe("Thread root post id (makes this a reply)."),
+      file_ids: z.array(routeSegment).optional().describe("Attached file ids."),
+      props: z.record(z.unknown()).optional().describe("Custom post properties."),
+    })
+    .strict(),
   write: true,
   resources: (args) => ({
     channelId: args.channel_id,
@@ -39,11 +45,13 @@ const replyThread = {
   name: "reply_thread",
   title: "Reply to thread",
   description: "Reply to an existing thread (POST /posts with root_id).",
-  inputSchema: z.object({
-    channel_id: z.string().describe("Channel the thread lives in."),
-    root_id: z.string().describe("Root post id of the thread."),
-    message: z.string().describe("Reply text."),
-  }),
+  inputSchema: z
+    .object({
+      channel_id: routeSegment.describe("Channel the thread lives in."),
+      root_id: routeSegment.describe("Root post id of the thread."),
+      message: z.string().describe("Reply text."),
+    })
+    .strict(),
   write: true,
   resources: (args) => ({ channelId: args.channel_id, postId: args.root_id }),
   resultScope: "post",
@@ -66,7 +74,7 @@ const getChannelPosts = {
   description: "Fetch posts from a channel (GET /channels/{id}/posts).",
   inputSchema: z
     .object({
-      channel_id: z.string().describe("Channel id."),
+      channel_id: routeSegment.describe("Channel id."),
       page: z.number().int().nonnegative().optional().describe("Page index (default 0)."),
       per_page: z.number().int().positive().optional().describe("Results per page (default 60)."),
       since: z
@@ -77,17 +85,14 @@ const getChannelPosts = {
         .describe(
           "Unix timestamp in ms — return posts modified since this time, up to 1000. Cannot be combined with before, after, page, or per_page; results may have gaps.",
         ),
-      before: z
-        .string()
-        .min(1)
+      before: routeSegment
         .optional()
         .describe("Post id — return posts before this one (mutually exclusive with since/after)."),
-      after: z
-        .string()
-        .min(1)
+      after: routeSegment
         .optional()
         .describe("Post id — return posts after this one (mutually exclusive with since/before)."),
     })
+    .strict()
     .superRefine((args, ctx) => {
       if (
         args.since != null &&
@@ -131,9 +136,11 @@ const getThread = {
   name: "get_thread",
   title: "Get thread",
   description: "Fetch a full post thread (GET /posts/{id}/thread).",
-  inputSchema: z.object({
-    post_id: z.string().describe("Root post id."),
-  }),
+  inputSchema: z
+    .object({
+      post_id: routeSegment.describe("Root post id."),
+    })
+    .strict(),
   resources: (args) => ({ postId: args.post_id }),
   resultScope: "posts",
   // Client4.getPostThread now defaults to a 60-post page. Omitting perPage via
@@ -148,12 +155,14 @@ const getPost = {
   name: "get_post",
   title: "Get post",
   description: "Fetch a single post by id (GET /posts/{id}).",
-  inputSchema: z.object({
-    post_id: z.string().describe("Post id."),
-  }),
+  inputSchema: z
+    .object({
+      post_id: routeSegment.describe("Post id."),
+    })
+    .strict(),
   resources: (args) => ({ postId: args.post_id }),
   resultScope: "post",
-  handler: (args, { session }) => session.call((c) => c.getPost(args.post_id)),
+  handler: (args, { resources }) => resources.post(args.post_id),
 };
 // ---------------------------------------------------------------------------
 // search_posts — POST /teams/{id}/posts/search
@@ -162,15 +171,17 @@ const searchPosts = {
   name: "search_posts",
   title: "Search posts",
   description: "Search for posts in a team (POST /teams/{id}/posts/search).",
-  inputSchema: z.object({
-    team_id: z.string().min(1).describe("Team id to search within."),
-    terms: z.string().describe("Search terms."),
-    is_or_search: z
-      .boolean()
-      .default(false)
-      .optional()
-      .describe("Use OR logic between terms (default false)."),
-  }),
+  inputSchema: z
+    .object({
+      team_id: routeSegment.describe("Team id to search within."),
+      terms: z.string().describe("Search terms."),
+      is_or_search: z
+        .boolean()
+        .default(false)
+        .optional()
+        .describe("Use OR logic between terms (default false)."),
+    })
+    .strict(),
   resources: (args) => ({ teamId: args.team_id }),
   resultScope: "posts",
   handler: (args, { session }) =>
@@ -183,10 +194,12 @@ const editPost = {
   name: "edit_post",
   title: "Edit post",
   description: "Edit the text of an existing post (PUT /posts/{id}/patch).",
-  inputSchema: z.object({
-    post_id: z.string().describe("Post id to edit."),
-    message: z.string().describe("New message text."),
-  }),
+  inputSchema: z
+    .object({
+      post_id: routeSegment.describe("Post id to edit."),
+      message: z.string().describe("New message text."),
+    })
+    .strict(),
   write: true,
   resources: (args) => ({ postId: args.post_id }),
   resultScope: "post",
@@ -201,10 +214,15 @@ const deletePost = {
   name: "delete_post",
   title: "Delete post",
   description: "Delete a post (soft delete; DELETE /posts/{id}).",
-  inputSchema: z.object({
-    post_id: z.string().describe("Post id to delete."),
-    confirm: z.boolean().optional().describe("Must be true to authorize this destructive action."),
-  }),
+  inputSchema: z
+    .object({
+      post_id: routeSegment.describe("Post id to delete."),
+      confirm: z
+        .boolean()
+        .optional()
+        .describe("Must be true to authorize this destructive action."),
+    })
+    .strict(),
   destructive: true,
   resources: (args) => ({ postId: args.post_id }),
   handler: (args, { session }) => session.call((c) => c.deletePost(args.post_id)),
@@ -217,20 +235,22 @@ const sendDm = {
   title: "Send DM",
   description:
     "Open a direct (2-person) or group (3–8 person) channel and send a message (POST /channels/direct | /channels/group + POST /posts).",
-  inputSchema: z.object({
-    user_ids: z
-      .array(z.string().min(1))
-      .min(1)
-      .max(7)
-      .refine(
-        (ids) => new Set(ids).size === ids.length,
-        "user_ids must contain unique participants",
-      )
-      .describe(
-        "The OTHER participants, without duplicates or yourself (1 for DM, 2–7 for group).",
-      ),
-    message: z.string().describe("Message text."),
-  }),
+  inputSchema: z
+    .object({
+      user_ids: z
+        .array(routeSegment)
+        .min(1)
+        .max(7)
+        .refine(
+          (ids) => new Set(ids).size === ids.length,
+          "user_ids must contain unique participants",
+        )
+        .describe(
+          "The OTHER participants, without duplicates or yourself (1 for DM, 2–7 for group).",
+        ),
+      message: z.string().describe("Message text."),
+    })
+    .strict(),
   write: true,
   resources: () => ({ createsChannel: true }),
   resultScope: "post",
@@ -255,9 +275,11 @@ const pinPost = {
   name: "pin_post",
   title: "Pin post",
   description: "Pin a post to its channel (POST /posts/{id}/pin).",
-  inputSchema: z.object({
-    post_id: z.string().describe("Post id to pin."),
-  }),
+  inputSchema: z
+    .object({
+      post_id: routeSegment.describe("Post id to pin."),
+    })
+    .strict(),
   write: true,
   resources: (args) => ({ postId: args.post_id }),
   handler: (args, { session }) => session.call((c) => c.pinPost(args.post_id)),
@@ -269,9 +291,11 @@ const unpinPost = {
   name: "unpin_post",
   title: "Unpin post",
   description: "Unpin a post from its channel (POST /posts/{id}/unpin).",
-  inputSchema: z.object({
-    post_id: z.string().describe("Post id to unpin."),
-  }),
+  inputSchema: z
+    .object({
+      post_id: routeSegment.describe("Post id to unpin."),
+    })
+    .strict(),
   write: true,
   resources: (args) => ({ postId: args.post_id }),
   handler: (args, { session }) => session.call((c) => c.unpinPost(args.post_id)),
@@ -283,10 +307,12 @@ const addReaction = {
   name: "add_reaction",
   title: "Add reaction",
   description: "Add an emoji reaction to a post (POST /reactions).",
-  inputSchema: z.object({
-    post_id: z.string().describe("Post id."),
-    emoji_name: z.string().describe("Emoji name without colons (e.g. thumbsup)."),
-  }),
+  inputSchema: z
+    .object({
+      post_id: routeSegment.describe("Post id."),
+      emoji_name: routeSegment.describe("Emoji name without colons (e.g. thumbsup)."),
+    })
+    .strict(),
   write: true,
   resources: (args) => ({ postId: args.post_id }),
   handler: (args, { session }) =>
@@ -300,10 +326,12 @@ const removeReaction = {
   title: "Remove reaction",
   description:
     "Remove an emoji reaction from a post (DELETE /users/{uid}/posts/{pid}/reactions/{emoji}).",
-  inputSchema: z.object({
-    post_id: z.string().describe("Post id."),
-    emoji_name: z.string().describe("Emoji name without colons (e.g. thumbsup)."),
-  }),
+  inputSchema: z
+    .object({
+      post_id: routeSegment.describe("Post id."),
+      emoji_name: routeSegment.describe("Emoji name without colons (e.g. thumbsup)."),
+    })
+    .strict(),
   write: true,
   resources: (args) => ({ postId: args.post_id }),
   handler: (args, { session }) =>
