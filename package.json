@@ -40,9 +40,10 @@
     "start": "node dist/index.js",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run",
     "test:watch": "vitest",
-    "test:integration": "MM_INTEGRATION=1 vitest run src/integration",
+    "test:mocks": "vitest run src/integration/mocked",
+    "test:integration": "MM_INTEGRATION=1 vitest run src/integration/live.integration.test.ts",
     "changeset": "changeset",
     "version": "changeset version",
     "release": "npm run build && changeset publish"
