@@ -163,8 +163,13 @@ npx prettier --write docs/api-coverage.json src/api/catalog.json
 Use `--check` on either script to verify instead of rewriting. `--cached-source /path/to/cache`
 supports offline verification against the pinned source manifest; `--source /path/to/mattermost`
 requires a clean checkout at the exact pinned commit. The base 149 source files and seven
-supplemental model/app/web files are hash-verified. Inventory validation also tracks the MCP
+supplemental model/app/web files are hash-verified against their actual bytes, including changes
+hidden by Git index flags. Inventory validation also tracks the MCP
 tool sources, so regenerate the audit before the catalog after tool-source changes.
+
+The two commands are small entry points. Source verification, route inventory, catalog
+normalization and source-backed corrections each have their own module under `scripts/`;
+the catalog generator does not import or execute the audit command.
 
 The production build copies native JavaScript and the catalog into a clean `dist/`.
 No compiler, audit scripts, source fixtures or tests are required in the published runtime.
