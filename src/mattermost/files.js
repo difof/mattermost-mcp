@@ -1,19 +1,15 @@
-// Client4 has uploadFile and file route builders, but no public methods for
-// GET /files/{id} or /files/{id}/info. Keep those documented REST v4 endpoints
-// behind the same Client4 options, authentication recovery, and request retries.
-import type { Client4 } from "@mattermost/client";
+// File routes absent from Client4's public methods share its request options,
+// authentication recovery, and retry policy through this bounded transport.
 import mattermost from "@mattermost/client";
-import type { FileInfo } from "@mattermost/types/files";
 import { runClientRequest } from "./resilience.js";
-
-async function assertResponseOk(client: Client4, url: string, response: Response): Promise<void> {
+async function assertResponseOk(client, url, response) {
   if (response.ok) return;
   const body = await response.text();
-  let error: Record<string, unknown> = {};
+  let error = {};
   try {
-    const parsed: unknown = JSON.parse(body);
+    const parsed = JSON.parse(body);
     if (parsed !== null && typeof parsed === "object") {
-      error = parsed as Record<string, unknown>;
+      error = parsed;
     }
   } catch {
     // Reverse proxies can return plain text or HTML instead of an API error.
@@ -26,23 +22,20 @@ async function assertResponseOk(client: Client4, url: string, response: Response
     ...(typeof error.detailed_error === "string" ? { detailed_error: error.detailed_error } : {}),
   });
 }
-
 /** Metadata also identifies the post owning a file for resource guard checks. */
-export function fetchFileMetadata(client: Client4, fileId: string): Promise<FileInfo> {
+export function fetchFileMetadata(client, fileId) {
   const url = `${client.getFileRoute(fileId)}/info`;
   const options = { method: "get" };
   return runClientRequest(client, url, options, async () => {
     const response = await fetch(url, client.getOptions(options));
     await assertResponseOk(client, url, response);
-    return (await response.json()) as FileInfo;
+    return await response.json();
   });
 }
-
-function sizeError(maxBytes: number): Error {
+function sizeError(maxBytes) {
   return new Error(`file exceeds max_bytes (${maxBytes}); raise max_bytes to download`);
 }
-
-async function cancelOversizedDownload(stream: { cancel(): Promise<void> } | null): Promise<void> {
+async function cancelOversizedDownload(stream) {
   try {
     await stream?.cancel();
   } catch {
@@ -50,13 +43,8 @@ async function cancelOversizedDownload(stream: { cancel(): Promise<void> } | nul
     // so it cannot be mistaken for a transient error and retried.
   }
 }
-
 /** Stop downloading as soon as a response exceeds the accepted decoded size. */
-export function fetchFileContent(
-  client: Client4,
-  fileId: string,
-  maxBytes: number,
-): Promise<Buffer> {
+export function fetchFileContent(client, fileId, maxBytes) {
   const url = client.getFileRoute(fileId);
   const options = { method: "get" };
   return runClientRequest(client, url, options, async () => {
@@ -74,9 +62,8 @@ export function fetchFileContent(
       throw sizeError(maxBytes);
     }
     if (!response.body) return Buffer.alloc(0);
-
     const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
+    const chunks = [];
     let size = 0;
     try {
       for (;;) {
