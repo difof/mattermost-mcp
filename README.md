@@ -40,6 +40,21 @@ The process uses the saved login. For environment-based credentials, see
 
 **Install this fork from source.** The upstream npm package does not include this fork's changes.
 
+## Agent skill
+
+Load [the Mattermost skill](.agents/skills/mattermost-mcp/SKILL.md) for efficient Code Mode,
+existing DM/group history and reliable writes. It includes focused OpenCode v2 examples.
+
+For use from any OpenCode project, run from this checkout:
+
+```bash
+mkdir -p ~/.config/opencode/skills
+ln -s "$PWD/.agents/skills/mattermost-mcp" ~/.config/opencode/skills/
+```
+
+Load `@mattermost-mcp` in OpenCode. Other skill-capable harnesses can load the same folder;
+installing the MCP server alone does not register the skill globally.
+
 ## What it covers
 
 | Area               | Tools | Capabilities                                                              |
