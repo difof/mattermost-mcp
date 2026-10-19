@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mattermost MCP"
+  short_description: "Read and act on Mattermost with efficient Code Mode"
+  default_prompt: "Use $mattermost-mcp to read conversations and carry out my Mattermost task."
