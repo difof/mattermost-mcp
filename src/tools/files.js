@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { routeSegment } from "./route-params.js";
-import { fetchFileContent } from "../mattermost/files.js";
-import { decodeBase64 } from "../mattermost/binary.js";
+import { fetchFileContent, uploadFileContent } from "../mattermost/files.js";
+import { createUploadReader } from "../mattermost/uploads.js";
+import { uploadFields, refineUpload } from "./upload-params.js";
 const DEFAULT_MAX_BYTES = 8 * 1024 * 1024;
 // ---------------------------------------------------------------------------
 // upload_file — POST /files (multipart)
@@ -10,23 +11,27 @@ const uploadFile = {
   name: "upload_file",
   title: "Upload file",
   description:
-    "Upload a file to a channel (POST /files multipart). Returns file ids that can be passed to post_message.file_ids.",
+    "Upload a file to a channel from file_path on the MCP server (requires MM_UPLOAD_ROOTS) or inline content_base64. Local bytes stay out of tool arguments/results. Returns file metadata/ids to attach with post_message.file_ids; does not post a message.",
   inputSchema: z
     .object({
       channel_id: routeSegment.describe("Channel to upload the file into."),
-      filename: z.string().describe("File name (including extension)."),
-      content_base64: z.string().describe("File bytes encoded as base64."),
+      ...uploadFields,
     })
-    .strict(),
+    .strict()
+    .superRefine(refineUpload),
   write: true,
   resources: (args) => ({ channelId: args.channel_id }),
   handler: (args, { session }) =>
     session.call(async (c) => {
-      const bytes = decodeBase64(args.content_base64);
+      const { bytes, filename } = await createUploadReader(session.config.uploads)(args);
       const fd = new FormData();
       fd.append("channel_id", args.channel_id);
-      fd.append("files", new Blob([bytes]), args.filename);
-      const resp = await c.uploadFile(fd);
+      fd.append(
+        "files",
+        new Blob([bytes], { type: args.content_type ?? "application/octet-stream" }),
+        filename,
+      );
+      const resp = await uploadFileContent(c, fd);
       return resp.file_infos.map((f) => ({
         id: f.id,
         name: f.name,
