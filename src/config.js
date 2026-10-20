@@ -1,5 +1,7 @@
 import { z } from "zod";
+import { isAbsolute } from "node:path";
 export const DEFAULT_OAUTH_REDIRECT = "http://127.0.0.1:7000/callback";
+export const DEFAULT_MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 export const DEFAULT_RESILIENCE = {
   timeoutMs: 30_000,
   maxRetries: 3,
@@ -10,6 +12,27 @@ const boolEnv = (def) =>
   z
     .preprocess((v) => (v == null ? def : v), z.enum(["true", "false"]))
     .transform((v) => v === "true");
+const uploadRoots = z
+  .string()
+  .default("[]")
+  .transform((value, ctx) => {
+    try {
+      const roots = JSON.parse(value);
+      if (
+        !Array.isArray(roots) ||
+        roots.some((root) => typeof root !== "string" || !isAbsolute(root) || root.includes("\0"))
+      ) {
+        throw new Error();
+      }
+      return [...new Set(roots)];
+    } catch {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Use a JSON array of absolute upload directory paths",
+      });
+      return z.NEVER;
+    }
+  });
 /** Mattermost's server root, optionally including a deployment subpath. */
 export const ServerUrlSchema = z
   .string()
@@ -80,6 +103,13 @@ const EnvSchema = z
     MM_TEAM_ALLOWLIST: z.string().optional(),
     MM_CHANNEL_ALLOWLIST: z.string().optional(),
     MM_MAX_MESSAGE_LEN: z.coerce.number().int().positive().default(16383),
+    MM_UPLOAD_ROOTS: uploadRoots,
+    MM_MAX_UPLOAD_BYTES: z.coerce
+      .number()
+      .int()
+      .safe()
+      .positive()
+      .default(DEFAULT_MAX_UPLOAD_BYTES),
     MM_REQUEST_TIMEOUT_MS: z.coerce
       .number()
       .int()
@@ -162,6 +192,10 @@ export function loadConfig(env = process.env) {
       teamAllowlist: csvToList(e.MM_TEAM_ALLOWLIST),
       channelAllowlist: csvToList(e.MM_CHANNEL_ALLOWLIST),
       maxMessageLen: e.MM_MAX_MESSAGE_LEN,
+    },
+    uploads: {
+      roots: e.MM_UPLOAD_ROOTS,
+      maxBytes: e.MM_MAX_UPLOAD_BYTES,
     },
     resilience: {
       timeoutMs: e.MM_REQUEST_TIMEOUT_MS,
