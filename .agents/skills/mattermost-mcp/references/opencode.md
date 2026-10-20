@@ -2,7 +2,8 @@
 
 Read the section needed for the task:
 [discovery](#discover-only-needed-tools), [results](#use-decoded-results),
-[batched reads](#batch-selected-histories), [sending](#send-after-resolving-the-target).
+[batched reads](#batch-selected-histories), [sending](#send-after-resolving-the-target),
+[local uploads](#upload-a-local-file).
 
 These examples target OpenCode v2 `execute`. Discover the server's actual namespace first;
 `mattermost` below assumes that MCP server name. Each block is a separate execution, with no
@@ -139,6 +140,29 @@ return { id: post.id, channel_id: post.channel_id, message: post.message };
 
 For an existing resolved channel, call `post_message` directly. Do not automatically replay this
 block after a failure; use the conversation reference's reconciliation procedure.
+
+## Upload a local file
+
+Discover `upload_file` and confirm its schema includes `file_path`. After resolving the channel
+and the requested file, pass the path directly. The example assumes `/srv/agent-uploads` is in
+the MCP server's `MM_UPLOAD_ROOTS` and the file exists on that server; it needs no filesystem
+access inside `execute`.
+
+```js
+const files = await tools.mattermost.upload_file({
+  channel_id: "RESOLVED_CHANNEL_ID",
+  file_path: "/srv/agent-uploads/report.pdf",
+});
+if (!Array.isArray(files) || files.length !== 1 || !files[0]?.id) {
+  throw new Error("Upload outcome requires reconciliation");
+}
+return files.map(({ id, name, size, mime_type }) => ({ id, name, size, mime_type }));
+```
+
+This uploads only. Use the returned IDs in a later authorized `post_message` call; do not reload
+the file or print base64. If the running MCP lacks path inputs, update/rebuild that installation
+and restart its connection. If the file is not visible to the MCP process or outside its allowed
+roots, report the missing mount/configuration without bypassing the confidentiality boundary.
 
 ## Host references
 
