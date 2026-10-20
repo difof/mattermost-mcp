@@ -2,6 +2,7 @@ import { z } from "zod";
 import { describeOperation, resolveOperation, searchOperations } from "../api/discovery.js";
 import { assertApiAccess, operationGuard } from "../api/policy.js";
 import { callApi } from "../api/client.js";
+import { uploadFields, refineUpload } from "./upload-params.js";
 
 const scalar = z.union([z.string(), z.number().finite(), z.boolean()]);
 const apiSearch = {
@@ -39,7 +40,7 @@ const apiCall = {
   name: "api_call",
   title: "Call a Mattermost API operation",
   description:
-    "Call a catalog operation using the configured account. Get the operation ID and inputs from api_search/api_describe. Uses path parameters, query and JSON body; uploads accept files or body_base64. Returns HTTP status, selected headers and data (binary: body_base64). Read-only and destructive guards apply per operation. Unavailable with team/channel allowlists; use scoped convenience tools there. Special-auth and local-socket routes cannot use the account credential.",
+    "Call a catalog operation using the configured account. Get the operation ID and inputs from api_search/api_describe. Uses path parameters, query and JSON body; uploads accept files with base64 or server-local file_path, or raw body_base64/body_file_path. Local paths require MM_UPLOAD_ROOTS and keep file bytes out of tool arguments. Returns HTTP status, selected headers and data (binary: body_base64). Read-only and destructive guards apply per operation. Unavailable with team/channel allowlists; use scoped convenience tools there. Special-auth and local-socket routes cannot use the account credential.",
   inputSchema: z
     .object({
       operation: z.string().min(1),
@@ -57,18 +58,26 @@ const apiCall = {
           z
             .object({
               field: z.string().min(1),
-              filename: z.string().min(1),
-              content_base64: z.string(),
-              content_type: z.string().optional(),
+              ...uploadFields,
             })
-            .strict(),
+            .strict()
+            .superRefine(refineUpload),
         )
         .min(1)
         .optional(),
       body_base64: z
         .string()
         .optional()
-        .describe("Raw bytes for a catalogued binary upload, mutually exclusive with body/files."),
+        .describe(
+          "Raw bytes for a catalogued binary upload; exclusive with body, files and body_file_path.",
+        ),
+      body_file_path: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          "Absolute file path on the MCP server for a raw binary upload. Requires MM_UPLOAD_ROOTS; exclusive with body, files and body_base64.",
+        ),
       content_type: z.string().optional(),
       headers: z
         .record(z.string())
@@ -96,7 +105,7 @@ const apiCall = {
   handler: async (args, { session }) => {
     const operation = resolveOperation(args.operation);
     assertApiAccess(operation, args, session);
-    return session.call((client) => callApi(client, operation, args));
+    return session.call((client) => callApi(client, operation, args, session.config.uploads));
   },
 };
 
