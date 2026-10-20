@@ -59,9 +59,18 @@ Handle the host's error form and check the expected success shape before continu
 | Attach or inspect files            | `get_file_metadata`, `get_file`, `upload_file`                         |
 | Any other supported REST operation | `api_search` → `api_describe` → `api_call`                             |
 
-For files, inspect metadata first, keep downloads bounded, and return metadata or a usable artifact
-instead of base64 in the conversation. Upload to the resolved channel, then attach the returned
-file IDs when posting. An upload alone does not send a message.
+For existing local files, discover `upload_file` and pass an absolute `file_path`. The MCP server
+reads the bytes; Code Mode only passes the path and receives file metadata. Paths must exist on
+the MCP server's filesystem inside its configured `MM_UPLOAD_ROOTS`; remote/container servers
+need the file accessible there. `filename` defaults to the basename. Generic multipart uploads
+also accept `files[].file_path`; raw binary uploads use `body_file_path` after `api_describe`.
+Use exactly one local or inline source. Respect the configured aggregate upload byte limit.
+
+If the installed schema lacks path inputs, roots are disabled, or the path is unavailable, report
+the runtime/configuration gap. Never work around a no-content/no-base64 boundary with shell/read
+output, encoding or another transport. For downloads, inspect metadata first and keep reads
+bounded. Upload to the resolved channel, return metadata, then attach the returned file IDs only
+when posting is authorized. An upload alone does not send a message.
 
 ## Respect account and operation boundaries
 
