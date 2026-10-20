@@ -218,7 +218,7 @@ export function assertApiAccess(op, args, session) {
   const operation = `${op.method.toUpperCase()} ${op.path}`;
   const ephemeral = operation === "POST /api/v4/posts/ephemeral";
   if (!messageOperations.has(operation) && !ephemeral) return;
-  if (args.body_base64 !== undefined) {
+  if (args.body_base64 !== undefined || args.body_file_path !== undefined) {
     throw new GuardrailError(
       "refused: message-writing operations require a JSON body to enforce MM_MAX_MESSAGE_LEN",
     );
