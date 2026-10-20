@@ -1,0 +1,31 @@
+- Treat every tracked file, commit, tag, release, CI artifact and repository attachment as public; never publish private operational information.
+- Never commit operator-specific hostnames, usernames, account IDs, internal domains or addresses, filesystem layouts, absolute or relative machine paths, infrastructure topology, session IDs, database contents, private logs or live audit evidence.
+- Never commit credentials, tokens, passwords, private keys, secret-derived identifiers or copies of private configuration; keep sensitive values in private runtime inputs.
+- Use reserved example domains, clearly synthetic identities and portable placeholders; repository-relative references may identify project files but must not describe an operator's filesystem.
+- Keep private audit notes and live-test evidence outside version control; publish only reusable contracts, generic findings and synthetic examples.
+- Scan all staged changes, filenames, fixtures, generated outputs and publication metadata before publishing; privacy diagnostics must report locations and categories without echoing sensitive matches.
+- Keep private comparison values outside the repository; never encode real identities or secrets in a denylist, regression test, scanner configuration or commit message.
+- Use a public pseudonym and a GitHub noreply address for project commits; preserve legitimate upstream attribution and licensing.
+- Keep this policy limited to durable project rules; do not add active plans, task instructions, progress reports or deployment-specific recipes.
+- Use native JavaScript ESM with explicit imports, small functions and domain-owned modules; do not add TypeScript, elaborate type systems or generic frameworks.
+- Keep dependency versions locked and runtime version metadata consistent; preserve supported Node versions unless a deliberate compatibility change is documented.
+- Add tools through their owning domain and the shared registry; use strict input schemas and keep write, destructive and resource checks attached to each tool.
+- Resolve the correct account and resource permissions before I/O; never reuse credentials across a different server origin or silently substitute another account.
+- Keep MCP stdout exclusively for protocol traffic and send diagnostics to stderr; keep CLI modules lazy and browser automation confined to interactive login.
+- Keep help and version commands authentication-free and independent of browser dependencies.
+- Keep MCP validation, result formatting and error translation centralized; distinguish protocol errors from tool failures and preserve useful HTTP status without exposing secrets.
+- Classify generic API operations using trusted catalog policy; preserve read-only, destructive-confirmation, message-size, resource-allowlist and result-filtering rules.
+- Keep request retries and authentication recovery at individual request boundaries; never replay an entire tool callback or blindly retry an ambiguous write.
+- Preserve deadlines, cancellation, bounded decoded responses and redirect restrictions for API, authentication and file traffic.
+- Persist credentials privately and atomically; never persist login passwords or describe expiring browser session tokens as permanent access tokens.
+- Preserve message-tool contracts: direct-message arguments name only the other participants, and post edits use the patch endpoint.
+- Preserve account-scoped cache access, membership-generation fencing, read counters, retry receipts, retention limits and opt-in notification delivery.
+- Use non-consuming status checks for health inspection; do not claim existing unread messages or send real messages without explicit live-test authorization.
+- Regenerate API catalogs and coverage inventories from pinned verified official sources; never hand-edit generated runtime files or API data.
+- Describe API coverage within its actual authentication, permission, license and deployment boundaries; do not imply that dynamic plugin APIs are covered.
+- Install locked dependencies and validate changes with formatting, lint, relevant regressions, the offline suite, build and privacy checks as appropriate.
+- Keep live integration opt-in and use synthetic fixtures for offline tests; do not equate mock success with live authorization or completed agent work.
+- Keep tests focused on independent failures, reuse the existing HTTP fixtures and avoid reproducing upstream business logic.
+- Validate builds in an isolated checkout when the main checkout supplies a running service.
+- Keep changes scoped, use Conventional Commits with one changed file per commit, preserve existing work and finish with a clean working tree.
+- Install this fork from source; package publishing is a release action, never a validation command.
