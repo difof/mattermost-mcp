@@ -1,5 +1,5 @@
 import { Blob } from "node:buffer";
-import { decodeBase64 } from "../mattermost/binary.js";
+import { createUploadReader } from "../mattermost/uploads.js";
 
 const requestHeaders = new Set([
   "accept",
@@ -81,14 +81,21 @@ function headersFor(operation, supplied) {
     if (Object.hasOwn(headers, lower)) throw new Error(`duplicate header '${name}'`);
     headers[lower] = value;
   }
+  // Reject malformed headers before opening a local upload source.
+  const normalized = new Headers(headers);
+  for (const name of Object.keys(headers)) headers[name] = normalized.get(name);
   return headers;
 }
 
-function requestBody(operation, args, headers) {
+async function requestBody(operation, args, headers, uploads) {
   const hasBody = Object.hasOwn(args, "body");
-  const hasBytes = args.body_base64 !== undefined;
+  const hasBase64 = args.body_base64 !== undefined;
+  const hasFile = args.body_file_path !== undefined;
+  const hasBytes = hasBase64 || hasFile;
+  if (hasBase64 && hasFile)
+    throw new Error("body_base64 and body_file_path are mutually exclusive");
   if (hasBytes && (hasBody || args.files))
-    throw new Error("body_base64 is mutually exclusive with body and files");
+    throw new Error("body_base64/body_file_path are mutually exclusive with body and files");
   if (!hasBody && !hasBytes && !args.files) {
     if (args.content_type) throw new Error("content_type requires a request body");
     return undefined;
@@ -105,7 +112,9 @@ function requestBody(operation, args, headers) {
       : allowed.includes("application/json")
         ? "application/json"
         : allowed[0];
-  const contentType = args.content_type ?? preferred;
+  const contentType = new Headers({ "Content-Type": args.content_type ?? preferred }).get(
+    "content-type",
+  );
   const media = contentType.split(";")[0].trim().toLowerCase();
   if (!allowed.map((type) => type.toLowerCase()).includes(media)) {
     throw new Error(
@@ -113,7 +122,7 @@ function requestBody(operation, args, headers) {
     );
   }
   if (media === "multipart/form-data") {
-    if (hasBytes) throw new Error("multipart uploads use files, not body_base64");
+    if (hasBytes) throw new Error("multipart uploads use files, not body_base64/body_file_path");
     if (
       hasBody &&
       (args.body === null || typeof args.body !== "object" || Array.isArray(args.body))
@@ -121,6 +130,7 @@ function requestBody(operation, args, headers) {
       throw new Error("multipart body must be an object of form fields");
     }
     const form = new FormData();
+    const readUpload = createUploadReader(uploads);
     for (const [field, value] of Object.entries(args.body ?? {})) {
       for (const item of Array.isArray(value) ? value : [value]) {
         form.append(
@@ -130,12 +140,13 @@ function requestBody(operation, args, headers) {
       }
     }
     for (const file of args.files ?? []) {
+      const { bytes, filename } = await readUpload(file);
       form.append(
         file.field,
-        new Blob([decodeBase64(file.content_base64)], {
+        new Blob([bytes], {
           type: file.content_type ?? "application/octet-stream",
         }),
-        file.filename,
+        filename,
       );
     }
     // fetch must generate the boundary; a caller-provided boundary is never used.
@@ -145,21 +156,21 @@ function requestBody(operation, args, headers) {
   // Match Client4's spelling so its JSON default is replaced, not duplicated.
   headers["Content-Type"] = contentType;
   if (media === "application/json" || media.endsWith("+json")) {
-    if (hasBytes) throw new Error("JSON requests use body, not body_base64");
+    if (hasBytes) throw new Error("JSON requests use body, not body_base64/body_file_path");
     return JSON.stringify(args.body);
   }
-  if (!hasBytes) throw new Error("binary requests require body_base64");
-  return decodeBase64(args.body_base64);
+  if (!hasBytes) throw new Error("binary requests require body_base64 or body_file_path");
+  const { bytes } = await createUploadReader(uploads)({
+    content_base64: args.body_base64,
+    file_path: args.body_file_path,
+  });
+  return bytes;
 }
 
-export function createRequest(client, operation, args) {
+export async function createRequest(client, operation, args, uploads) {
   const url = requestUrl(client, operation, args);
   const headers = headersFor(operation, args.headers);
-  const body = requestBody(operation, args, headers);
-  // Validate all final headers before retrying HTTP, including Content-Type.
-  // Retain its Client4 spelling while applying Fetch's value normalization.
-  const normalized = new Headers(headers);
-  for (const name of Object.keys(headers)) headers[name] = normalized.get(name);
+  const body = await requestBody(operation, args, headers, uploads);
   return {
     url,
     options: {
