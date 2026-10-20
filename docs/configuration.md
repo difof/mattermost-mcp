@@ -108,6 +108,24 @@ running; in production pass them directly to the process. The [`.env.example`](.
 | `MM_CLIENT_SECRET`  | when `oauth2`   | —                                | OAuth2 app client secret.                                                                                                                                  |
 | `MM_OAUTH_REDIRECT` | no              | `http://127.0.0.1:7000/callback` | HTTP loopback redirect URI; see the supported hosts and restrictions under [oauth2](#oauth2).                                                              |
 
+#### Uploads
+
+| Variable              | Required | Default     | Description                                                                                             |
+| --------------------- | -------- | ----------- | ------------------------------------------------------------------------------------------------------- |
+| `MM_UPLOAD_ROOTS`     | no       | `[]`        | JSON array of absolute directories allowed for local file uploads. An empty array disables local reads. |
+| `MM_MAX_UPLOAD_BYTES` | no       | `104857600` | Maximum combined decoded file/binary bytes per tool call (100 MiB), including local and inline sources. |
+
+Use trusted upload directories that other users cannot alter. To allow a dedicated directory,
+pass `MM_UPLOAD_ROOTS='["/srv/agent-uploads"]'`
+in the MCP server's environment and restart the connection. Paths refer to that server's
+filesystem; a remote or containerized server needs the file available at the specified path,
+for example through a mounted directory. This setting does not give Code Mode filesystem access.
+
+Only regular files whose resolved paths stay inside a configured root are accepted. Relative
+paths, shell expansion and symlink escapes are refused. Existing write/resource guards run before
+file reads. The byte limit applies to the actual data read; Mattermost may impose a lower limit.
+See [file upload arguments](tools.md#files-3).
+
 #### Resilience
 
 | Variable                | Required | Default | Description                                                                             |
