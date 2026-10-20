@@ -127,6 +127,7 @@ export class MattermostHttpFixture {
       url: this.url,
       auth: { mode: "pat", token: TOKEN },
       guardrails: this.guardrails,
+      uploads: this.options.uploads,
       resilience: { timeoutMs: 2000, maxRetries: 1, baseDelayMs: 1, ...this.options.resilience },
     });
     this.server = new Server(
