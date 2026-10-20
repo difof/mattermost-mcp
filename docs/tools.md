@@ -48,19 +48,20 @@ parameters. Then use `get_channel_posts` for a selected channel's history.
 
 ### Request and response interface
 
-| Argument          | Meaning                                                                                                                                                         |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `operation`       | Canonical operation ID or a unique alias. Arbitrary URLs and HTTP methods are not accepted.                                                                     |
-| `path`            | Unencoded path parameter values. Every placeholder is required; separators, encoded segments and traversal are refused.                                         |
-| `query`           | String/number/boolean values or arrays. Arrays use the declared style; unknown array parameters use repeated keys. False, zero and empty strings are preserved. |
-| `body`            | Any JSON root value. With multipart uploads, an object of text fields; array values become repeated fields and object values are JSON-encoded.                  |
-| `files`           | Multipart file parts: `{field, filename, content_base64, content_type?}`. Text fields are written before file parts.                                            |
-| `body_base64`     | Raw binary upload bytes, mutually exclusive with `body` and `files`. Requires a catalogued binary request format.                                               |
-| `content_type`    | Optional choice from the operation's request formats. Multipart boundaries are generated automatically.                                                         |
-| `headers`         | Declared endpoint headers and supported conditional/download headers. Cannot override credentials, host or routing headers.                                     |
-| `max_bytes`       | Maximum decoded response bytes, including error bodies; default **1 MiB**. Request smaller pages or raise it explicitly for larger downloads.                   |
-| `response_format` | `auto` (default), `json`, `text` or `base64`. Auto recognizes JSON with charset, NDJSON, text and binary media.                                                 |
-| `confirm`         | Must be `true` for a destructive operation, together with `MM_ALLOW_DESTRUCTIVE=true`.                                                                          |
+| Argument          | Meaning                                                                                                                                                                                                      |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `operation`       | Canonical operation ID or a unique alias. Arbitrary URLs and HTTP methods are not accepted.                                                                                                                  |
+| `path`            | Unencoded path parameter values. Every placeholder is required; separators, encoded segments and traversal are refused.                                                                                      |
+| `query`           | String/number/boolean values or arrays. Arrays use the declared style; unknown array parameters use repeated keys. False, zero and empty strings are preserved.                                              |
+| `body`            | Any JSON root value. With multipart uploads, an object of text fields; array values become repeated fields and object values are JSON-encoded.                                                               |
+| `files`           | Multipart parts with `field`, exactly one of `file_path`/`content_base64`, optional `content_type`, and `filename` (required for inline content; defaults to the local basename). Text fields precede files. |
+| `body_base64`     | Inline raw binary bytes. Requires a catalogued binary request format; mutually exclusive with `body_file_path`, `body` and `files`.                                                                          |
+| `body_file_path`  | Absolute server-local path for a raw binary upload, subject to the upload roots/byte limit. Mutually exclusive with `body_base64`, `body` and `files`.                                                       |
+| `content_type`    | Optional choice from the operation's request formats. Multipart boundaries are generated automatically.                                                                                                      |
+| `headers`         | Declared endpoint headers and supported conditional/download headers. Cannot override credentials, host or routing headers.                                                                                  |
+| `max_bytes`       | Maximum decoded response bytes, including error bodies; default **1 MiB**. Request smaller pages or raise it explicitly for larger downloads.                                                                |
+| `response_format` | `auto` (default), `json`, `text` or `base64`. Auto recognizes JSON with charset, NDJSON, text and binary media.                                                                                              |
+| `confirm`         | Must be `true` for a destructive operation, together with `MM_ALLOW_DESTRUCTIVE=true`.                                                                                                                       |
 
 Successful JSON, scalar and text responses return `{status, headers, data}`. Binary responses
 return `{status, headers, body_base64, bytes}`, including empty binary bodies (`bytes: 0`).
@@ -68,6 +69,12 @@ HEAD, 204, 304 and other empty nonbinary responses return `data: null`. HTTP 4xx
 become MCP tool errors that preserve the actual status and available server details.
 Redirect responses include their status and `Location` header but are never followed. Response
 headers exclude credentials and cookies. Outputs use compact JSON.
+
+Local file inputs require [upload configuration](configuration.md#uploads). The configured
+`MM_MAX_UPLOAD_BYTES` limit covers all decoded file/binary sources in one call; `max_bytes`
+independently limits the response. Local paths are read by the MCP server without passing file
+contents through the agent. Raw file bodies are accepted only for catalogued binary formats,
+never as a substitute for a JSON body.
 
 The generic interface validates operation/path/header/encoding boundaries. Mattermost validates
 business fields and permissions; the upstream request schemas have known omissions, so unknown
@@ -150,15 +157,36 @@ expiration against its own clock.
 
 ## Files (3)
 
-| Tool                | Description                                                                                          |
-| ------------------- | ---------------------------------------------------------------------------------------------------- |
-| `upload_file` ⚠️    | Upload a file to a channel (base64 content); returns file ids to attach via `post_message.file_ids`. |
-| `get_file`          | Download a file's content as base64 (configurable `max_bytes` cap, default 8 MiB).                   |
-| `get_file_metadata` | File info (`GET /files/{id}/info`).                                                                  |
+| Tool                | Description                                                                                                       |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `upload_file` ⚠️    | Upload inline base64 or a server-local file; returns metadata and file ids to attach via `post_message.file_ids`. |
+| `get_file`          | Download a file's content as base64 (configurable `max_bytes` cap, default 8 MiB).                                |
+| `get_file_metadata` | File info (`GET /files/{id}/info`).                                                                               |
 
-Uploads require canonical base64, including padding when required; malformed content is rejected
-before the upload request. Download limits apply to decoded bytes and error bodies. Metadata
-responses are capped at 1 MiB. Metadata and download requests reject HTTP redirects.
+`upload_file` takes `channel_id` and exactly one of `file_path` or `content_base64`.
+For local files, `filename` defaults to the path's basename; supply it to rename the attachment.
+Inline uploads require `filename` and canonical base64, including padding when required.
+Both sources accept optional `content_type`. Successful uploads return only an array of
+`{id, name, size, mime_type}` objects.
+
+With `/srv/agent-uploads` in `MM_UPLOAD_ROOTS`, this uploads without putting file contents into
+MCP arguments or results:
+
+```json
+{
+  "channel_id": "RESOLVED_CHANNEL_ID",
+  "file_path": "/srv/agent-uploads/report.pdf"
+}
+```
+
+The file must exist on the MCP server, not merely on the agent's machine. Local reads are
+disabled by default; see [upload configuration](configuration.md#uploads) for roots and limits.
+An upload alone does not post a message. Attach returned IDs through `post_message.file_ids`
+when sending is authorized. If a confidential upload is blocked by an old runtime or unavailable
+path, report that missing capability; do not print contents/base64 through another tool.
+
+Download limits apply to decoded bytes and error bodies. Metadata and upload responses are
+capped at 1 MiB. Convenience upload, metadata and download requests reject HTTP redirects.
 
 ## Personal-account workflows
 
