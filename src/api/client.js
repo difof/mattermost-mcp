@@ -70,8 +70,8 @@ function decodeResponse(operation, args, response, bytes) {
 }
 
 /** Use session auth/retries; serialization stays separate from HTTP execution. */
-export function callApi(client, operation, args) {
-  const { url, options } = createRequest(client, operation, args);
+export async function callApi(client, operation, args, uploads) {
+  const { url, options } = await createRequest(client, operation, args, uploads);
   return runClientRequest(
     client,
     url,
