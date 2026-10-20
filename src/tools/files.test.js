@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import mattermost from "@mattermost/client";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { dispatchToolCall } from "./registry.js";
 import { fileTools } from "./files.js";
 import { applyRequestResilience, applyRequestTimeout } from "../mattermost/resilience.js";
@@ -41,6 +44,45 @@ function rawFetchClient() {
 afterEach(() => vi.unstubAllGlobals());
 // --- tests -------------------------------------------------------------------
 describe("upload_file", () => {
+  it("reuses captured local bytes during authentication recovery", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "mattermost-upload-recovery-"));
+    try {
+      const path = join(directory, "snapshot.bin");
+      const original = Buffer.from([0, 255, 128, 42]);
+      await writeFile(path, original);
+      const bodies = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (_url, options) => {
+          bodies.push(Buffer.from(await options.body.get("files").arrayBuffer()));
+          return bodies.length === 1
+            ? Response.json({ message: "Session expired" }, { status: 401 })
+            : Response.json({
+                file_infos: [{ id: "snapshot-file", name: "snapshot.bin", size: original.length }],
+              });
+        }),
+      );
+      const client = rawFetchClient();
+      const recover = vi.fn(async () => {
+        await writeFile(path, Buffer.from("Changed while the server refreshes authentication"));
+        client.setToken("refreshed");
+        return true;
+      });
+      applyRequestResilience(client, { timeoutMs: 30_000, maxRetries: 0, baseDelayMs: 1 }, recover);
+      const session = fakeSession({}, client);
+      session.config.uploads = { roots: [directory], maxBytes: original.length };
+      const result = await dispatchToolCall(fileTools, { session }, "upload_file", {
+        channel_id: "c1",
+        file_path: path,
+      });
+      expect(result.isError).not.toBe(true);
+      expect(recover).toHaveBeenCalledOnce();
+      expect(bodies).toEqual([original, original]);
+      expect(JSON.parse(result.content[0].text)[0].id).toBe("snapshot-file");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
   it("rejects malformed base64 before sending an upload", async () => {
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);
