@@ -1,6 +1,27 @@
-// File routes absent from Client4 use its auth, timeout and request retry policy.
+// Bounded file transfers use Client4 authentication, timeouts and request retry policy.
 import { runClientRequest } from "./resilience.js";
 import { readApiResponse } from "./http-response.js";
+
+/** Keep upload bytes on the configured origin and bound the metadata response. */
+export function uploadFileContent(client, body) {
+  const url = client.getFilesRoute();
+  const options = { method: "post", body, redirect: "manual" };
+  return runClientRequest(
+    client,
+    url,
+    options,
+    async () => {
+      const response = await fetch(url, client.getOptions(options));
+      const bytes = await readApiResponse(client, url, response, 1024 * 1024);
+      try {
+        return JSON.parse(new TextDecoder().decode(bytes));
+      } catch {
+        throw new Error(`invalid upload metadata JSON (HTTP ${response.status})`);
+      }
+    },
+    { retrySafe: false },
+  );
+}
 
 /** Metadata also identifies the post owning a file for resource guard checks. */
 export function fetchFileMetadata(client, fileId) {
