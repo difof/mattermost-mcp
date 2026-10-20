@@ -1,6 +1,42 @@
 import { describe, it, expect } from "vitest";
+import { resolve } from "node:path";
 import { loadConfig } from "./config.js";
 const base = { MM_URL: "https://mm.example.com" };
+describe("loadConfig — uploads", () => {
+  it("disables local reads by default and bounds upload bytes", () => {
+    expect(loadConfig({ ...base, MM_TOKEN: "x" }).uploads).toEqual({
+      roots: [],
+      maxBytes: 100 * 1024 * 1024,
+    });
+  });
+  it("preserves spaces and commas in absolute roots and deduplicates them", () => {
+    const root = resolve("uploads, ready");
+    expect(
+      loadConfig({
+        ...base,
+        MM_TOKEN: "x",
+        MM_UPLOAD_ROOTS: JSON.stringify([root, root]),
+        MM_MAX_UPLOAD_BYTES: "4096",
+      }).uploads,
+    ).toEqual({ roots: [root], maxBytes: 4096 });
+  });
+  it.each(["not-json", "null", '"/tmp"', '["relative"]', "[123]", '["/tmp\\u0000bad"]'])(
+    "rejects invalid upload roots: %s",
+    (MM_UPLOAD_ROOTS) => {
+      expect(() => loadConfig({ ...base, MM_TOKEN: "x", MM_UPLOAD_ROOTS })).toThrow(
+        /MM_UPLOAD_ROOTS/,
+      );
+    },
+  );
+  it.each(["0", "-1", "1.5", "Infinity", "9007199254740992"])(
+    "rejects an unsafe upload byte cap: %s",
+    (MM_MAX_UPLOAD_BYTES) => {
+      expect(() => loadConfig({ ...base, MM_TOKEN: "x", MM_MAX_UPLOAD_BYTES })).toThrow(
+        /MM_MAX_UPLOAD_BYTES/,
+      );
+    },
+  );
+});
 describe("loadConfig — url", () => {
   it("rejects a missing url", () => {
     expect(() => loadConfig({ MM_TOKEN: "x" })).toThrow(/MM_URL/);
