@@ -120,14 +120,17 @@ it("filters before keyset paging and preserves insertion cursors across edits, r
   const first = c.list({ ...filters, limit: 2 });
   expect(first.messages.map((x) => x.postId)).toEqual([last.postId, wanted.postId]);
   expect(c.list({ ...filters, limit: 2, cursor: first.nextCursor })).toEqual({
-    messages: [base],
+    messages: [{ ...base, readCount: 0 }],
     nextCursor: null,
   });
   expect(() => c.list({ cursor: "bad!" })).toThrow("cursor");
   const next = c.nextMatching(filters, seq, common.createdAt);
-  expect(next.record).toEqual(wanted);
+  expect(next.record).toEqual({ ...wanted, readCount: 0 });
   c.apply({ ...wanted, message: "Edited", updatedAt: start + 99 });
-  expect(c.nextMatching(filters, next.seq, common.createdAt).record).toEqual(last);
+  expect(c.nextMatching(filters, next.seq, common.createdAt).record).toEqual({
+    ...last,
+    readCount: 0,
+  });
   const high = c.highWatermark();
   expect(() => c.applyBatch([post(8), { postId: "oops" }])).toThrow();
   expect(c.highWatermark()).toBe(high);
@@ -159,15 +162,32 @@ it("caps serialized results, says when a message was truncated, and resumes at t
   const large = post(11, { message: "\u0001🚀".repeat(30000) }),
     ordinary = post(2);
   c.applyBatch([ordinary, large]);
-  const page = c.list();
+  const page = c.pullPage({}, () => true).page;
   expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThanOrEqual(128 * 1024);
   expect(page.messages[0]).toMatchObject({
     messageTruncated: true,
     messageBytes: Buffer.byteLength(large.message),
     postId: large.postId,
+    readCount: 1,
   });
   expect(large.message.startsWith(page.messages[0].message)).toBe(true);
-  expect(c.list({ cursor: page.nextCursor }).messages).toEqual([ordinary]);
+  expect(c.list({ cursor: page.nextCursor }).messages).toEqual([{ ...ordinary, readCount: 0 }]);
+});
+it("migrates a pre-counter SQLite cache in place; edits, replay and restart preserve delivery counts", async () => {
+  const h = await fixture();
+  const record = post(7);
+  h.db.apply(record);
+  h.db.checkpoint(start);
+  h.db.database.exec("DROP INDEX unread_timeline; ALTER TABLE posts DROP COLUMN readCount;");
+  const c = await h.reopen();
+  expect(c.getCheckpoint()).toBe(start);
+  expect(c.nextMatching({}, 0, 0).record.readCount).toBe(0);
+  expect(c.pullPage({ unreadOnly: true }, () => true).page.messages[0].readCount).toBe(1);
+  c.apply({ ...record, message: "updated", updatedAt: record.updatedAt + 1 });
+  c.apply(record);
+  const next = await h.reopen();
+  expect(next.list().messages[0]).toMatchObject({ message: "updated", readCount: 1 });
+  expect(next.pullPage({ unreadOnly: true }, () => true).page.messages).toEqual([]);
 });
 it("refuses an unsafe existing database or symlink instead of using it", async () => {
   const root = mkdtempSync(join(tmpdir(), "mm-private-"));
