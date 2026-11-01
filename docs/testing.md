@@ -43,6 +43,8 @@ configured production server.
 | [API contracts](../src/integration/mocked/api-contracts.test.js)                       | JSON arrays/scalars/null, repeated queries, multipart/raw/resumable uploads, binary/text/HEAD/304, redirects, bounded streams and seven source-checked join-request routes |
 | [API authentication and policy](../src/integration/mocked/api-auth-and-policy.test.js) | HTTP-status/error preservation; account/header/path boundaries; read-only/destructive checks; allowlists; message limits; read retries and write replay prevention         |
 
+The [management integration tests](../src/integration/mocked/admin-settings.test.js) exercise the admin endpoint with loopback clients. Cache reload tests cover the retention window, rollback of a failed activation, and which callbacks survive a policy change. No live Mattermost message is needed to validate these behaviors.
+
 ### Exhaustive dispatch versus endpoint semantics
 
 The dispatch suite compares the runtime catalog against the independently generated
