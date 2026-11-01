@@ -36,6 +36,7 @@ function page(db, filters) {
     params = [];
   for (const [field, value] of Object.entries({
     type: filters.channel_type,
+    name: filters.exact_name,
     id: filters.channel_id,
     teamId: filters.team_id,
     peerUserId: filters.peer_user_id,
@@ -115,11 +116,15 @@ export function openDirectory(cache) {
           ids.push(channel.id);
         }
         retain.run(JSON.stringify(ids));
+        cache.retainChannels(ids);
         setAccount.run(me.id, me.username, Date.now());
       });
     },
     remove(id) {
-      remove.run(id);
+      cache.transaction(() => {
+        remove.run(id);
+        cache.purgeChannel(id);
+      });
     },
     list(filters = {}) {
       const snapshot = account.get();
