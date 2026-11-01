@@ -91,7 +91,7 @@ it("caches received and sent posts locally and delivers only an explicitly subsc
   const incoming = post("g", room, peer, at, "ordinary channel message"),
     sent = post("h", dm, me.id, at + 1, "sent from another client");
   let channels = [
-    { id: dm, type: "D", team_id: "", last_post_at: at },
+    { id: dm, type: "D", team_id: "", name: [me.id, peer].sort().join("__"), last_post_at: at },
     { id: room, type: "P", team_id: id("t"), last_post_at: at },
   ];
   const history = new Map([
@@ -200,13 +200,18 @@ it("caches received and sent posts locally and delivers only an explicitly subsc
     };
     service = await startService(env);
     const catalog = await service.client.listTools();
-    expect(catalog.tools).toHaveLength(41);
+    expect(catalog.tools).toHaveLength(42);
     expect(
       catalog.tools.find((t) => t.name === "list_cached_messages").annotations.readOnlyHint,
-    ).toBe(true);
+    ).toBe(false);
     await vi.waitFor(async () =>
       expect((await list(service.client)).messages.map((p) => p.postId)).toEqual([retained.id]),
     );
+    // The directory is a membership view, even for a channel without a retained post.
+    const directory = await call(service.client, "list_cached_conversations");
+    expect(directory.account).toMatchObject(me);
+    expect(directory.conversations.map((c) => c.id).sort()).toEqual([dm, room].sort());
+    expect(directory.conversations.find((c) => c.id === dm)?.peerUserId).toBe(peer);
     publish(incoming, "P");
     publish(sent, "D");
     await vi.waitFor(async () =>
@@ -279,6 +284,11 @@ it("caches received and sent posts locally and delivers only an explicitly subsc
       direction: "incoming",
     });
     expect(JSON.stringify(admitted[0])).not.toContain(matching.message);
+    const unread = { channel_id: dm, sender_id: peer, since: published, unread_only: true };
+    expect((await list(service.client, unread)).messages).toMatchObject([
+      { postId: matching.id, readCount: 1 },
+    ]);
+    expect((await list(service.client, unread)).messages).toEqual([]);
     await service.stop();
     service = undefined;
     // No service is running. Model 65 posts in one millisecond spanning multiple
