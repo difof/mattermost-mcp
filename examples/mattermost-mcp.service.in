@@ -1,0 +1,15 @@
+[Unit]
+Description=Shared Mattermost MCP and optional incoming event listener
+
+[Service]
+Type=simple
+@ENVIRONMENT_FILE@
+ExecStart=@EXEC_START@
+Restart=on-failure
+RestartSec=8
+TimeoutStopSec=45
+UMask=0077
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target
