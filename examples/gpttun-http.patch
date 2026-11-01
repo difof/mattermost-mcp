@@ -1,0 +1,49 @@
+--- a/bridge.mjs
++++ b/bridge.mjs
+@@ -5,4 +5,5 @@
+ import { fileURLToPath } from "node:url"
+ import { Client } from "@modelcontextprotocol/sdk/client/index.js"
++import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
+ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
+ import { Server } from "@modelcontextprotocol/sdk/server/index.js"
+@@ -20,8 +21,24 @@
+ let stopping = false
+
+-async function localDefinition(prefix) {
++async function upstreamDefinition(prefix) {
+   const directory = `${homedir()}/.config/opencode`
+   const opencode = JSON.parse(await readFile(`${directory}/opencode.json`, "utf8"))
+   const definition = opencode.mcp?.servers?.[prefix]
++  if (prefix === "mattermost" && definition?.type === "remote" && !definition.disabled) {
++    const url = new URL(definition.url)
++    if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || url.pathname !== "/mcp" ||
++        url.username || url.password || url.search || url.hash)
++      throw new Error("Use a loopback Mattermost MCP URL")
++    const ref = /^Bearer \{file:([^}]+)\}$/.exec(definition.headers?.Authorization ?? "")
++    if (!ref) throw new Error("Expected a file-backed Mattermost HTTP bearer")
++    const file = resolve(directory, ref[1].replace(/^~\//, `${homedir()}/`))
++    const token = (await readFile(file, "utf8")).trim()
++    if (!/^[A-Za-z0-9._~+/-]{32,512}={0,2}$/.test(token)) throw new Error("Invalid MCP bearer")
++    const transport = new StreamableHTTPClientTransport(url, {
++      requestInit: { headers: { Authorization: `Bearer ${token}` } },
++      fetch: (target, init) => fetch(target, { ...init, redirect: "error" }),
++    })
++    return [prefix, transport]
++  }
+   if (definition?.type !== "local" || definition.disabled || !definition.command?.length)
+     throw new Error(`Configure an enabled local ${prefix} MCP in ~/.config/opencode/opencode.json`)
+@@ -53,10 +70,10 @@
+
+ try {
+-  for (const prefix of ["plane", "mattermost"]) definitions.push(await localDefinition(prefix))
+-  for (const [prefix, command, args, environment, cwd] of definitions) {
++  for (const prefix of ["plane", "mattermost"]) definitions.push(await upstreamDefinition(prefix))
++  for (const [prefix, upstream, args, environment, cwd] of definitions) {
+     const client = new Client({ name: "gpttun-bridge", version: "0.1.0" }, { capabilities: {} })
+     children.push(client)
+-    const transport = new StdioClientTransport({
+-      command,
++    const transport = typeof upstream !== "string" ? upstream : new StdioClientTransport({
++      command: upstream,
+       args,
+       cwd: cwd ?? homedir(),
