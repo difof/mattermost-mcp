@@ -47,6 +47,12 @@ function report({ state, env, boundPort }) {
         },
       ]),
     ),
+    limits: {
+      max_response_bytes: state.session.config.maxResponseBytes,
+      http_max_concurrent: state.input.http.maxConcurrent,
+      sensitive_reads: !!state.session.config.allowSensitiveReads,
+      verify_cached_posts: !!state.session.config.cacheVerifyPosts,
+    },
     secrets: secretStatus(env, state.input.config),
     account_id: state.session.userId,
     restart_required: state.values.http_port === boundPort ? [] : ["http_port"],
