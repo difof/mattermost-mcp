@@ -61,7 +61,7 @@ const failure = (text) => ({ isError: true, content: [{ type: "text", text }] })
 const tools = buildToolList(definitions);
 
 /** Separate protocol server: ordinary Mattermost operations never enter this catalog. */
-export function makeAdminMcpServer(manager) {
+export function makeAdminMcpServer(manager, exchange) {
   const server = new Server(
     { name: "mattermost-mcp-admin", version: VERSION },
     { capabilities: { tools: {} } },
@@ -74,7 +74,9 @@ export function makeAdminMcpServer(manager) {
     // In particular, never echo arbitrary keys, values, filesystem errors or upstream auth errors.
     if (!args.success) return failure("Invalid management arguments; see the tool's input schema.");
     try {
-      const result = await definition.run(manager, args.data);
+      const run = () => definition.run(manager, args.data);
+      // A committed management operation must still drain after the peer closes.
+      const result = await (exchange ? exchange.track(run) : run());
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
     } catch (error) {
       return failure(
