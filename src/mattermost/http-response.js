@@ -1,6 +1,16 @@
 import mattermost from "@mattermost/client";
 import { Buffer } from "node:buffer";
 
+import { DEFAULT_MAX_RESPONSE_BYTES } from "../config.js";
+
+const ceilings = new WeakMap();
+export function setResponseCeiling(client, limit = DEFAULT_MAX_RESPONSE_BYTES) {
+  ceilings.set(client, limit);
+}
+export function responseCeiling(client) {
+  return ceilings.get(client) ?? DEFAULT_MAX_RESPONSE_BYTES;
+}
+
 class ResponseLimitError extends Error {}
 
 async function cancel(stream) {
@@ -53,7 +63,7 @@ function apiError(client, url, response, body, fallback) {
   } catch {
     // Proxies can return text or HTML instead of a Mattermost error object.
   }
-  return new mattermost.ClientError(client.getUrl(), {
+  const error = new mattermost.ClientError(client.getUrl(), {
     url,
     status_code: response.status,
     message: typeof detail?.message === "string" ? detail.message : body || fallback,
@@ -62,6 +72,9 @@ function apiError(client, url, response, body, fallback) {
       ? { detailed_error: detail.detailed_error }
       : {}),
   });
+  if (response.status === 429 || response.status === 503)
+    error.retryAfter = response.headers.get("retry-after");
+  return error;
 }
 
 /** Keep HTTP failures identifiable even when reading their response body fails. */
@@ -72,6 +85,11 @@ export async function readApiResponse(
   maxBytes,
   { allowRedirect = false, limitMessage } = {},
 ) {
+  const ceiling = responseCeiling(client);
+  if (maxBytes > ceiling) {
+    maxBytes = ceiling;
+    limitMessage = "response exceeds the configured MM_MAX_RESPONSE_BYTES ceiling";
+  }
   const success = response.ok || (allowRedirect && response.status >= 300 && response.status < 400);
   let bytes;
   try {
