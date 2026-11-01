@@ -1,10 +1,78 @@
 // Normalize OpenAPI operations into the compact catalog and validate references.
 import { isDeepStrictEqual } from "node:util";
 import { VERSION, sourceHashes } from "./mattermost-source.mjs";
-import { METHODS, routeKey, authenticationFamily } from "./api-inventory.mjs";
+import { documentedOperations, sortedObject, uniqueSorted } from "./inventory/routes.mjs";
+import { authenticationFamily } from "./inventory/server-routes.mjs";
 import { applyCatalogCorrections } from "./api-catalog-corrections.mjs";
 
-const uniqueSorted = (values) => [...new Set(values)].sort();
+function documentsByRoute(specs) {
+  const docs = {};
+  for (const { key, item, operation } of documentedOperations(specs)) {
+    const document = structuredClone(operation);
+    document.parameters = [
+      ...structuredClone(item.parameters ?? []),
+      ...(document.parameters ?? []),
+    ];
+    docs[key] = document;
+  }
+  return docs;
+}
+
+function normalizeOperation(key, record, document, corrections) {
+  const [method, path] = key.split(" ", 2);
+  const server = record.local_socket_only ?? record;
+  const wrapper = server.auth_wrapper;
+  const auth = authenticationFamily(wrapper);
+  const operation = { method, path };
+  for (const field of ["operationId", "summary", "description", "tags", "deprecated"]) {
+    if (Object.hasOwn(document, field)) operation[field] = document[field];
+  }
+  if (!Object.hasOwn(operation, "summary")) {
+    const words = server.handler.replace(/(?<!^)([A-Z])/g, " $1");
+    operation.summary = words[0].toUpperCase() + words.slice(1).toLowerCase();
+  }
+  operation.tags ??= [path.split("/")[3]];
+  Object.assign(operation, {
+    auth,
+    transport: auth === "local" ? "local" : "http",
+    parameters: document.parameters ?? [],
+    responses: { ...(document.responses ?? {}) },
+    source: {
+      ...(record.openapi ? { openapi: record.openapi } : {}),
+      server: server.server,
+      handler: server.handler,
+      authWrapper: wrapper,
+    },
+  });
+  if (Object.hasOwn(document, "requestBody")) operation.requestBody = document.requestBody;
+  for (const [old, name] of [
+    ["server_permission_constants", "permissionReferences"],
+    ["server_config_references", "configurationReferences"],
+    ["registration_feature_flags", "featureFlags"],
+  ]) {
+    if (Object.hasOwn(record, old)) operation.source[name] = record[old];
+  }
+  const missing = addPathParameters(operation);
+  if (missing.length && Object.keys(document).length) {
+    corrections.push({
+      operations: [key],
+      reason: `Declare missing required path parameter(s): ${missing.join(", ")}.`,
+      sources: [server.server],
+    });
+  }
+  return operation;
+}
+
+function addPathParameters(operation) {
+  const { path } = operation;
+  const names = new Set(operation.parameters.filter((p) => p.in === "path").map((p) => p.name));
+  const missing = [...path.matchAll(/\{([^{}]+)\}/g)]
+    .map((match) => match[1])
+    .filter((name) => !names.has(name));
+  for (const name of missing)
+    operation.parameters.push({ name, in: "path", required: true, schema: { type: "string" } });
+  return missing;
+}
 
 export function buildCatalog(specs, inventory, extra) {
   const definitions = specs["api/v4/source/definitions.yaml"].components;
@@ -12,76 +80,13 @@ export function buildCatalog(specs, inventory, extra) {
     schemas: definitions.schemas,
     responses: definitions.responses,
   });
-  const documents = {};
-  for (const spec of Object.values(specs)) {
-    for (const [path, item] of Object.entries(spec)) {
-      if (!path.startsWith("/")) continue;
-      for (const [method, definition] of Object.entries(item)) {
-        if (!METHODS.has(method.toUpperCase())) continue;
-        const operation = structuredClone(definition);
-        operation.parameters = [
-          ...structuredClone(item.parameters ?? []),
-          ...(operation.parameters ?? []),
-        ];
-        documents[routeKey(method, path)] = operation;
-      }
-    }
-  }
+  const documents = documentsByRoute(specs);
   const operations = {};
   const corrections = [];
-  const correct = (routes, reason, sources) =>
-    corrections.push({ operations: routes, reason, sources });
   for (const [key, record] of Object.entries(inventory.routes)) {
-    const [method, path] = key.split(" ", 2);
-    const server = record.local_socket_only ?? record;
-    const wrapper = server.auth_wrapper;
-    const auth = authenticationFamily(wrapper);
-    const document = documents[key] ?? {};
-    const operation = { method, path };
-    for (const field of ["operationId", "summary", "description", "tags", "deprecated"]) {
-      if (Object.hasOwn(document, field)) operation[field] = document[field];
-    }
-    if (!Object.hasOwn(operation, "summary")) {
-      const words = server.handler.replace(/(?<!^)([A-Z])/g, " $1");
-      operation.summary = words[0].toUpperCase() + words.slice(1).toLowerCase();
-    }
-    operation.tags ??= [path.split("/")[3]];
-    Object.assign(operation, {
-      auth,
-      transport: auth === "local" ? "local" : "http",
-      parameters: document.parameters ?? [],
-      responses: { ...(document.responses ?? {}) },
-      source: {
-        ...(record.openapi ? { openapi: record.openapi } : {}),
-        server: server.server,
-        handler: server.handler,
-        authWrapper: wrapper,
-      },
-    });
-    if (Object.hasOwn(document, "requestBody")) operation.requestBody = document.requestBody;
-    for (const [old, name] of [
-      ["server_permission_constants", "permissionReferences"],
-      ["server_config_references", "configurationReferences"],
-      ["registration_feature_flags", "featureFlags"],
-    ]) {
-      if (Object.hasOwn(record, old)) operation.source[name] = record[old];
-    }
-    const names = new Set(operation.parameters.filter((p) => p.in === "path").map((p) => p.name));
-    const missing = [...path.matchAll(/\{([^{}]+)\}/g)]
-      .map((match) => match[1])
-      .filter((name) => !names.has(name));
-    for (const name of missing)
-      operation.parameters.push({ name, in: "path", required: true, schema: { type: "string" } });
-    if (missing.length && Object.keys(document).length) {
-      correct([key], `Declare missing required path parameter(s): ${missing.join(", ")}.`, [
-        server.server,
-      ]);
-    }
-    operations[key] = operation;
+    operations[key] = normalizeOperation(key, record, documents[key] ?? {}, corrections);
   }
-
   applyCatalogCorrections(operations, components, inventory, corrections);
-
   const catalog = {
     version: VERSION,
     source: {
@@ -94,14 +99,33 @@ export function buildCatalog(specs, inventory, extra) {
       schema_limitations:
         "OpenAPI plus explicit source-backed corrections; not an exhaustive schema for every server-accepted field or deployment response. Undocumented body/query fields may be needed. References are preserved for lazy transitive schema discovery.",
     },
-    operations: Object.fromEntries(
-      Object.entries(operations).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
-    ),
+    operations: sortedObject(operations),
     components,
     corrections,
   };
   validateCatalog(catalog, inventory);
   return catalog;
+}
+
+function checkReference(catalog, reference) {
+  if (!reference.startsWith("#/components/"))
+    throw new Error(`Nonlocal catalog reference needs review: ${reference}`);
+  let target = catalog;
+  for (const part of reference.slice(2).split("/")) {
+    const name = part.replace(/~1/g, "/").replace(/~0/g, "~");
+    if (!target || !Object.hasOwn(target, name))
+      throw new Error(`Unresolved catalog reference: ${reference}`);
+    target = target[name];
+  }
+}
+
+function checkReferences(catalog) {
+  function visit(value) {
+    if (value === null || typeof value !== "object") return;
+    if (Object.hasOwn(value, "$ref")) checkReference(catalog, value.$ref);
+    for (const child of Object.values(value)) visit(child);
+  }
+  visit(catalog);
 }
 
 function validateCatalog(catalog, inventory) {
@@ -118,25 +142,7 @@ function validateCatalog(catalog, inventory) {
       "Catalog account-callable count differs from independently audited wrapper coverage",
     );
   }
-  const walk = (value) => {
-    if (Array.isArray(value)) value.forEach(walk);
-    else if (value !== null && typeof value === "object") {
-      if (Object.hasOwn(value, "$ref")) {
-        const reference = value.$ref;
-        if (!reference.startsWith("#/components/"))
-          throw new Error(`Nonlocal catalog reference needs review: ${reference}`);
-        let target = catalog;
-        for (const part of reference.slice(2).split("/")) {
-          const name = part.replace(/~1/g, "/").replace(/~0/g, "~");
-          if (!target || !Object.hasOwn(target, name))
-            throw new Error(`Unresolved catalog reference: ${reference}`);
-          target = target[name];
-        }
-      }
-      Object.values(value).forEach(walk);
-    }
-  };
-  walk(catalog);
+  checkReferences(catalog);
   for (const [key, operation] of Object.entries(catalog.operations)) {
     const expected = uniqueSorted(
       [...operation.path.matchAll(/\{([^{}]+)\}/g)].map((match) => match[1]),
