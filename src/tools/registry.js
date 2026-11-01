@@ -27,7 +27,7 @@ export function toMcpTool(def) {
     inputSchema: { type: "object", ...schema },
     annotations: {
       title: def.title,
-      readOnlyHint: !isWrite,
+      readOnlyHint: !isWrite && !def.localWrite,
       destructiveHint: Boolean(def.destructive),
     },
   };
