@@ -19,7 +19,7 @@ there is no compiler or custom test resolver.
 
 ## What the API mocks test
 
-The mock suite exercises all **37 exposed tools**: personal-account workflows through the
+The mock suite exercises all **37 core tools**: personal-account workflows through the
 34 convenience tools, plus catalog, transport and policy coverage through the three API tools
 for the complete pinned account-compatible HTTP inventory.
 
