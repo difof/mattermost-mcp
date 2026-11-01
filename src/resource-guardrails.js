@@ -26,6 +26,23 @@ export class ResourceGuard {
     this.posts.set(id, post);
     return post;
   }
+  // Mattermost selects before/after rows by the anchor timestamp globally.
+  // Resolve the anchor with the same account and bind it to this channel.
+  async assertAnchor(id, channelId) {
+    if (id === undefined) return;
+    if (typeof id !== "string" || !/^[A-Za-z0-9_-]+$/.test(id)) {
+      throw new GuardrailError("invalid pagination anchor");
+    }
+    let post;
+    try {
+      post = await this.post(id);
+    } catch {
+      throw new GuardrailError("pagination anchor is not available in this channel");
+    }
+    if (post?.id !== id || post.channel_id !== channelId || post.delete_at > 0) {
+      throw new GuardrailError("pagination anchor is not available in this channel");
+    }
+  }
   async file(id) {
     const cached = this.files.get(id);
     if (cached) return cached;
