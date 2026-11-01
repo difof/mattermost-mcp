@@ -1,6 +1,6 @@
 # Repository guide
 
-This fork exposes Mattermost REST API v4 over MCP stdio using the configured account's permissions.
+This fork exposes Mattermost REST API v4 over MCP stdio or loopback Streamable HTTP using the configured account's permissions.
 Start with [README.md](README.md). Read the relevant [tool contracts](docs/tools.md),
 [configuration](docs/configuration.md), [testing guide](docs/testing.md) or
 [API coverage boundaries](docs/api-coverage.md) before changing that area.
@@ -64,7 +64,7 @@ expanding every endpoint into startup tool descriptions.
 
 Coverage means the pinned core account-compatible HTTP surface, not every account's permissions,
 license or deployment behavior. Special-auth/local routes are catalogued but not account-callable;
-WebSocket events and dynamically defined plugin APIs are outside this executor's scope.
+WebSocket events are separate from the REST executor; see [the shared service](docs/shared-service.md). Dynamically defined plugin APIs are outside the executor's scope.
 
 ## Verification and delivery
 
