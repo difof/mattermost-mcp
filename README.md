@@ -1,7 +1,7 @@
 # mattermost-mcp
 
 Use your Mattermost account from an MCP agent: read conversations, send DMs and replies,
-manage channels, and work with files. **37 core tools** plus four optional cache and subscription tools, native JavaScript, stdio or shared Streamable HTTP, Node.js 20+.
+manage channels, and work with files. **37 core tools** plus five optional inbox, directory and subscription tools, native JavaScript, stdio or shared Streamable HTTP, Node.js 20+.
 
 This is [difof's fork](https://github.com/difof/mattermost-mcp) of
 [BryanBerger98/mattermost-mcp](https://github.com/BryanBerger98/mattermost-mcp), with fixes for
