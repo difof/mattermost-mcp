@@ -98,6 +98,9 @@ it("caches received and sent posts locally and delivers only an explicitly subsc
     [dm, [retained, expired]],
     [room, []],
   ]);
+  const byIdOnly = new Map(),
+    contentStatus = new Map(),
+    contentProbes = [];
   let failMembership = false,
     failHistory = false;
   const admitted = [],
@@ -114,8 +117,19 @@ it("caches received and sent posts locally and delivers only an explicitly subsc
         : res.end(JSON.stringify(channels));
     const match = u.pathname.match(/^\/mm\/api\/v4\/channels\/([a-z0-9]+)\/posts$/);
     if (match) {
+      if (u.searchParams.get("per_page") === "1") {
+        const status = contentStatus.get(match[1]) ?? 200;
+        contentProbes.push({ channel: match[1], status });
+        return res.writeHead(status).end(status === 200 ? '{"order":[],"posts":{}}' : "{}");
+      }
       if (failHistory) return res.writeHead(503).end('{"message":"fixture recovery unavailable"}');
-      const ps = u.searchParams.has("before") ? [] : (history.get(match[1]) ?? []);
+      // v11 compares timestamps strictly for before=ID, then applies page/per_page.
+      const rows = history.get(match[1]) ?? [];
+      const before = u.searchParams.get("before");
+      const cutoff = before ? rows.find((p) => p.id === before)?.create_at : Infinity;
+      const size = Number(u.searchParams.get("per_page"));
+      const offset = size * Number(u.searchParams.get("page") || 0);
+      const ps = rows.filter((p) => p.create_at < cutoff).slice(offset, offset + size);
       return res.end(
         JSON.stringify({
           order: ps.map((p) => p.id),
@@ -123,6 +137,8 @@ it("caches received and sent posts locally and delivers only an explicitly subsc
         }),
       );
     }
+    const single = u.pathname.match(/^\/mm\/api\/v4\/posts\/([a-z0-9]+)$/);
+    if (single && byIdOnly.has(single[1])) return res.end(JSON.stringify(byIdOnly.get(single[1])));
     res.writeHead(404).end("{}");
   });
   const sessionId = "ses_subscribed",
@@ -265,6 +281,20 @@ it("caches received and sent posts locally and delivers only an explicitly subsc
     expect(JSON.stringify(admitted[0])).not.toContain(matching.message);
     await service.stop();
     service = undefined;
+    // No service is running. Model 65 posts in one millisecond spanning multiple
+    // history pages, an offline edit and deletion, and an outgoing DM from another client.
+    const offlineAt = Date.now();
+    const burst = Array.from({ length: 65 }, (_, i) => ({
+      ...post("x", room, peer, offlineAt, "during downtime"),
+      id: String(i).padStart(26, "0"),
+    }));
+    const newest = post("z", room, peer, offlineAt + 1, "newer than the tied posts");
+    const offlineSend = post("n", dm, me.id, offlineAt, "offline send");
+    const edited = { ...retained, update_at: offlineAt, message: "edited during downtime" };
+    history.set(dm, [offlineSend, edited, expired]);
+    history.set(room, [newest, ...burst]);
+    // A cached post omitted by pagination is still accessible by ID; keep its body.
+    byIdOnly.set(sent.id, sent);
     // Block REST history during the second launch; any returned body must have survived on disk.
     failHistory = true;
     service = await startService(env);
@@ -279,8 +309,59 @@ it("caches received and sent posts locally and delivers only an explicitly subsc
     await expect(list(service.client, { channel_id: room })).rejects.toThrow(
       /accessible joined channel/,
     );
-    channels.push({ id: room, type: "P", team_id: id("t"), last_post_at: at });
+    // v11 updates the channel activity hint separately from the post write.
+    channels.push({ id: room, type: "P", team_id: id("t"), last_post_at: 0 });
     expect((await list(service.client, { channel_id: room })).messages).toEqual([]);
+    failHistory = false;
+    await vi.waitFor(
+      async () => {
+        const rows = (await list(service.client, { limit: 100 })).messages;
+        expect(rows.map((r) => r.postId).sort()).toEqual(
+          [...burst, newest, offlineSend, edited, sent].map((p) => p.id).sort(),
+        );
+        expect(rows.find((p) => p.postId === retained.id)?.message).toBe(edited.message);
+        expect(rows.find((p) => p.postId === offlineSend.id)?.direction).toBe("outgoing");
+      },
+      { timeout: 6000 },
+    );
+    // Mixed pages are refilled after purging a denied channel, without disclosing its cursor.
+    contentStatus.set(room, 403);
+    const visible = await list(service.client, { limit: 3 });
+    expect(visible.messages.map((r) => r.channelId)).toEqual([dm, dm, dm]);
+    expect(visible.nextCursor).toBe(null);
+    contentStatus.delete(room);
+    contentProbes.length = 0;
+    await list(service.client, { direction: "outgoing", channel_id: dm });
+    expect(contentProbes).toEqual([{ channel: dm, status: 200 }]);
+    // A joined DM can lose ReadChannelContent independently. A transient error blocks
+    // both disclosure paths without erasing the cached body; a definite denial purges it.
+    contentStatus.set(dm, 503);
+    await expect(list(service.client, { channel_id: dm })).rejects.toThrow();
+    contentStatus.delete(dm);
+    expect(
+      (await list(service.client, { direction: "outgoing", channel_id: dm })).messages.map(
+        (p) => p.postId,
+      ),
+    ).toContain(offlineSend.id);
+    contentProbes.length = 0;
+    contentStatus.set(dm, 503);
+    const blocked = post("d", dm, peer, Date.now(), "not authorized for delivery");
+    publish(blocked, "D");
+    await vi.waitFor(() => expect(contentProbes).toContainEqual({ channel: dm, status: 503 }), {
+      timeout: 5000,
+    });
+    await expect(list(service.client, { channel_id: dm })).rejects.toThrow();
+    expect(admitted).toHaveLength(1);
+    contentStatus.set(dm, 403);
+    await vi.waitFor(() => expect(contentProbes).toContainEqual({ channel: dm, status: 403 }), {
+      timeout: 5000,
+    });
+    await expect(list(service.client, { channel_id: dm })).rejects.toThrow(
+      /accessible joined channel/,
+    );
+    contentStatus.delete(dm);
+    expect((await list(service.client, { channel_id: dm })).messages).toEqual([]);
+    expect(admitted).toHaveLength(1);
     expect(callbackPosts).toEqual(["/api/session/" + sessionId + "/synthetic"]);
   } finally {
     await service?.stop();
