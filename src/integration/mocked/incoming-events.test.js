@@ -6,6 +6,8 @@ import { WebSocketServer } from "ws";
 import { buildClient } from "../../mattermost/client.js";
 import { openCache } from "../../events/cache.js";
 import { selectPostedFrame } from "../../events/filter.js";
+import { openDirectory } from "../../events/directory.js";
+import { createDirectoryRefresh } from "../../events/directory-refresh.js";
 import { startListener } from "../../events/listener.js";
 import { useMattermost } from "./mattermost-http-fixture.js";
 
@@ -13,7 +15,8 @@ const id = (c) => c.repeat(26);
 const me = { id: id("a"), username: "my.name" };
 const channel = id("c"),
   peer = id("b"),
-  denied = id("d");
+  denied = id("d"),
+  newGroup = id("n");
 const post = (key, extra = {}) => ({
   id: id(key),
   create_at: Date.now() - 10000,
@@ -77,7 +80,7 @@ it("keeps inbound and outbound conversations including file-only replies; filter
   });
 });
 
-const fixture = useMattermost({ user: me, guardrails: { channelAllowlist: [channel] } });
+const fixture = useMattermost({ user: me, guardrails: { channelAllowlist: [channel, newGroup] } });
 it("reconciles the full rolling window while receiving live posts, fixes offline edits/deletes and purges revoked channels", async () => {
   const f = fixture(),
     client = buildClient(f.url, 2000);
@@ -104,8 +107,8 @@ it("reconciles the full rolling window while receiving live posts, fixes offline
     { id: channel, type: "P", last_post_at: Date.now() },
     { id: denied, type: "D", last_post_at: Date.now() },
   ];
-  const member = (channels) => {
-    f.expect("GET", "/users/me", { reply: me });
+  const member = (channels, account = me) => {
+    f.expect("GET", "/users/me", { reply: account });
     f.expect("GET", "/users/me/channels", { query: { include_deleted: true }, reply: channels });
   };
   const page = (posts, before, extra = {}) =>
@@ -132,7 +135,11 @@ it("reconciles the full rolling window while receiving live posts, fixes offline
     },
   });
   page([laterDeleted, mine, old], original.id);
+  cache.directory = openDirectory(cache);
+  const directory = createDirectoryRefresh(session, cache);
   const stop = await startListener({
+    refreshDirectory: directory.refresh,
+    invalidateDirectory: directory.invalidate,
     session,
     ...cache,
     enqueue: cache.apply,
@@ -176,11 +183,36 @@ it("reconciles the full rolling window while receiving live posts, fixes offline
         .sort(),
     ).toEqual([original.id, mine.id, missed.id].sort());
     expect(rows().find((r) => r.postId === original.id).message).toBe("edited while disconnected");
+    // Channel and profile changes use REST values, never the event payload,
+    // and don't restart the entire history scan for a rename.
+    member([{ ...group[0], display_name: "Renamed channel" }, group[1]]);
+    sockets[1].send(
+      JSON.stringify({
+        event: "channel_updated",
+        seq: 1,
+        data: { channel: { id: denied, display_name: "untrusted" } },
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(cache.directory.list().conversations).toMatchObject([
+        { id: channel, displayName: "Renamed channel" },
+      ]),
+    );
+    member(group, { ...me, username: "renamed.user" });
+    sockets[1].send(
+      JSON.stringify({
+        event: "user_updated",
+        seq: 2,
+        data: { user: { id: me.id, username: "untrusted" } },
+      }),
+    );
+    await vi.waitFor(() => expect(cache.directory.list().account.username).toBe("renamed.user"));
+    expect(sockets).toHaveLength(2);
     member([]);
     sockets[1].send(
       JSON.stringify({
         event: "user_removed",
-        seq: 1,
+        seq: 3,
         broadcast: { user_id: me.id },
         data: { channel_id: channel },
       }),
@@ -189,10 +221,34 @@ it("reconciles the full rolling window while receiving live posts, fixes offline
     await vi.waitFor(() => expect(states.filter((x) => x === "connected")).toHaveLength(3), {
       timeout: 4500,
     });
-    expect(upgrades).toEqual(Array(3).fill("Bearer test-only-personal-pat"));
+    expect(cache.directory.list().conversations).toEqual([]);
+    // Joining a quiet group must populate the directory without any tool pull
+    // or a recent post. Only the REST-confirmed group belongs to this account.
+    member([{ id: newGroup, type: "G", display_name: "Quiet group", last_post_at: 0 }]);
+    f.expect("GET", "/channels/" + newGroup + "/posts", {
+      query: { per_page: 60, skipFetchThreads: true },
+      reply: listed([]),
+    });
+    sockets[2].send(
+      JSON.stringify({
+        event: "group_added",
+        seq: 1,
+        broadcast: { user_id: me.id },
+        data: { channel_id: denied },
+      }),
+    );
+    await vi.waitFor(() => expect(states.filter((x) => x === "connected")).toHaveLength(4), {
+      timeout: 4500,
+    });
+    expect(cache.directory.list().conversations).toMatchObject([
+      { id: newGroup, type: "G", displayName: "Quiet group", lastPostAt: 0 },
+    ]);
+    expect(rows()).toHaveLength(0);
+    expect(upgrades).toEqual(Array(4).fill("Bearer test-only-personal-pat"));
   } finally {
     release();
     await stop();
+    await directory.close();
     for (const s of ws.clients) s.terminate();
     await new Promise((resolve) => ws.close(resolve));
     cache.close();
