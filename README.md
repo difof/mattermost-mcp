@@ -1,7 +1,7 @@
 # mattermost-mcp
 
 Use your Mattermost account from an MCP agent: read conversations, send DMs and replies,
-manage channels, and work with files. **37 core tools** plus five optional inbox, directory and subscription tools, native JavaScript, stdio or shared Streamable HTTP, Node.js 20+.
+manage channels, and work with files. **37 core tools** plus seven optional inbox, directory and subscription tools, native JavaScript, stdio or shared Streamable HTTP, Node.js 20+.
 
 This is [difof's fork](https://github.com/difof/mattermost-mcp) of
 [BryanBerger98/mattermost-mcp](https://github.com/BryanBerger98/mattermost-mcp), with fixes for
@@ -40,7 +40,7 @@ The process uses the saved login. For environment-based credentials, see
 
 **Install this fork from source.** The upstream npm package does not include this fork's changes.
 
-Use the [shared HTTP service and systemd installer](docs/shared-service.md) for multiple local clients, a rolling SQLite cache (default 48 hours), and temporary callbacks. The optional [admin connection](docs/admin-settings.md) can change settings live or reload rotated credentials.
+Use the [shared HTTP service and systemd installer](docs/shared-service.md) for multiple local clients, a rolling SQLite inbox (default 48 hours), exact conversation lookup, and temporary callbacks. The optional [admin connection](docs/admin-settings.md) can change settings live or reload rotated credentials.
 
 ## Agent skill
 
