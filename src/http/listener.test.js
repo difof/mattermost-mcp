@@ -1,7 +1,8 @@
 import { request } from "node:http";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { requestSignal } from "../mattermost/request-signal.js";
 import { loadConfig } from "../config.js";
 import { listenHttp } from "./listener.js";
 
@@ -286,4 +287,93 @@ it("revokes slow uploads admitted under old credentials or an older body limit",
   await limited.accepted;
   settings.maxBodyBytes = 1;
   expect(await limited.finish()).toBe(413);
+});
+
+it("rejects RPC batches and holds admission until abandoned tool work settles", async () => {
+  let entered,
+    cancelled,
+    finish,
+    readers = 0;
+  const started = new Promise((resolve) => {
+    entered = resolve;
+  });
+  const aborted = new Promise((resolve) => {
+    cancelled = resolve;
+  });
+  const hold = new Promise((resolve) => {
+    finish = resolve;
+  });
+  const active = {
+    ...session,
+    call: async () => {
+      const signal = requestSignal();
+      signal.addEventListener("abort", cancelled, { once: true });
+      entered();
+      // Model an integration that acknowledges cancellation before finishing its cleanup.
+      await hold;
+      return { id: "fixture" };
+    },
+  };
+  const get = () => active;
+  get.acquire = () => {
+    readers++;
+    return { session: active, release: () => readers-- };
+  };
+  const adminToken = "other-local-admin-12345678901234567890";
+  http = await listenHttp(
+    get,
+    { port: 0, token, maxBodyBytes: 4096, maxConcurrent: 1, adminToken },
+    { list: () => ({}) },
+  );
+  const ping = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" });
+  const extra = { accept: "application/json, text/event-stream" };
+  expect(await exchange({ extra, chunks: ["[" + ping + "]"] })).toBe(400);
+  const peer = request(http.url, {
+    method: "POST",
+    headers: { ...headers, ...extra, "content-type": "application/json" },
+  });
+  peer.on("error", () => {});
+  peer.end(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "get_me", arguments: {} },
+    }),
+  );
+  try {
+    await started;
+    peer.destroy();
+    await aborted;
+    expect(readers).toBe(1);
+    expect(await exchange({ extra, chunks: [ping] })).toBe(429);
+    expect(
+      await exchange({
+        url: http.url + "/admin",
+        extra: { ...extra, authorization: "Bearer " + adminToken },
+        chunks: [ping],
+      }),
+    ).toBe(200);
+  } finally {
+    finish();
+    peer.destroy();
+  }
+  await vi.waitFor(() => expect(readers).toBe(0));
+  expect(await exchange({ extra, chunks: [ping] })).toBe(200);
+});
+
+it("caps serialized tool output even when a handler combines many successful reads", async () => {
+  http = await listenHttp(
+    {
+      ...session,
+      config: { ...session.config, maxResponseBytes: 2048 },
+      call: async () => ({ field: "x".repeat(300 * 1024) }),
+    },
+    { port: 0, token, maxBodyBytes: 4096 },
+  );
+  const client = await connect("result-limit");
+  const r = await client.callTool({ name: "get_me", arguments: {} });
+  expect(r.isError).toBe(true);
+  expect(r.content[0].text).toMatch(/result is too large/);
+  expect((await client.listTools()).tools.length).toBeGreaterThan(0);
 });
