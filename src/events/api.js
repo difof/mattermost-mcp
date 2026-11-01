@@ -40,7 +40,9 @@ export async function listAccessibleChannels(session, signal = new AbortControll
     if (!isMattermostId(channel?.id) || !allowedChannelTypes.has(channel.type))
       throw new Error("Invalid channel membership");
     if (await guard.channelAllowed(channel.id, channel)) {
-      channels.set(channel.id, { id: channel.id, type: channel.type });
+      // Never retain unrelated props, headers or internal integration fields.
+      const { id, type, name, display_name, team_id, delete_at, last_post_at } = channel;
+      channels.set(id, { id, type, name, display_name, team_id, delete_at, last_post_at });
     }
   }
   return channels;
