@@ -102,9 +102,14 @@ const apiCall = {
   destructive: true,
   guard: (args) => operationGuard(resolveOperation(args.operation)),
   compact: true,
-  handler: async (args, { session }) => {
+  handler: async (args, { session, resources }) => {
     const operation = resolveOperation(args.operation);
     assertApiAccess(operation, args, session);
+    if (operation.method === "GET" && operation.path === "/api/v4/channels/{channel_id}/posts") {
+      for (const anchor of [args.query.before, args.query.after]) {
+        if (anchor !== undefined) await resources.assertAnchor(anchor, args.path.channel_id);
+      }
+    }
     return session.call((client) => callApi(client, operation, args, session.config.uploads));
   },
 };
