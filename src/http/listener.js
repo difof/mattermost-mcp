@@ -44,7 +44,7 @@ async function requestBody(req, limit) {
   }
 }
 
-function requestHandler(session, { token, maxBodyBytes }) {
+function requestHandler(session, { token, maxBodyBytes, eventsEnabled }) {
   const expected = Buffer.from("Bearer " + token);
   return async (req, res) => {
     if (!loopbackRequest(req)) return reject(res, 403, "Invalid Host or Origin");
@@ -61,6 +61,7 @@ function requestHandler(session, { token, maxBodyBytes }) {
     if (req.headers["content-type"]?.split(";")[0].trim().toLowerCase() !== "application/json") {
       return reject(res, 415, "Expected application/json");
     }
+    if (eventsEnabled && !session.cache) return reject(res, 503, "Message cache is starting");
     const body = await requestBody(req, maxBodyBytes);
     if (body.status)
       return reject(res, body.status, body.status === 413 ? "Request too large" : "Invalid JSON");
