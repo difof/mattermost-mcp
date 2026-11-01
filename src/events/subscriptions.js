@@ -10,6 +10,7 @@ export function createSubscriptions({
   authorize,
   now = Date.now,
   send = deliverCallback,
+  deferred = false,
 }) {
   const db = cache.database;
   db.exec(`CREATE TABLE IF NOT EXISTS subscriptions(
@@ -41,7 +42,7 @@ export function createSubscriptions({
     dirty = false;
   function wake() {
     dirty = true;
-    if (timer || active || stopSignal.signal.aborted) return;
+    if (!poll || timer || active || stopSignal.signal.aborted) return;
     timer = setTimeout(() => {
       timer = undefined;
       dirty = false;
@@ -109,11 +110,29 @@ export function createSubscriptions({
       }),
     );
   }
-  const poll = setInterval(wake, 1000);
-  poll.unref();
-  wake();
+  let poll;
+  function start() {
+    if (poll || stopSignal.signal.aborted) return;
+    poll = setInterval(wake, 1000);
+    poll.unref();
+    wake();
+  }
+  if (!deferred) start();
   return {
+    start,
     wake,
+    prune: () => clean.run(now()),
+    // A removed destination must not receive a backlog if a later reload re-adds it.
+    revokeDisabledTargets() {
+      const remove = sql("DELETE FROM subscriptions WHERE id=?");
+      for (const row of all.all()) {
+        try {
+          targets.resolve({ callback_url: row.target });
+        } catch {
+          remove.run(row.id);
+        }
+      }
+    },
     register(args, filters) {
       const target = targets.resolve(args);
       const t = now(),
