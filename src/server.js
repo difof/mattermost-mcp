@@ -6,20 +6,18 @@ import { registerTools } from "./tools/registry.js";
 import { allTools } from "./tools/index.js";
 import { log } from "./log.js";
 import { VERSION } from "./version.js";
-/**
- * Start the MCP server on stdio. Configuration comes from `resolveConfig`:
- * saved `login` credentials are the baseline, overridden by any `MM_*` env vars.
- * Fails fast on bad config, then authenticates before serving.
- */
-export async function runServer() {
-  const config = resolveConfig();
-  const session = await createSession(config);
+/** Each transport owns its MCP protocol state; the authenticated account can be shared. */
+export function makeMcpServer(session) {
   const server = new Server(
     { name: "mattermost-mcp", version: VERSION },
     { capabilities: { tools: {} } },
   );
   // tools/list + tools/call dispatched from the registry, sharing the session.
   registerTools(server, allTools, { session });
+  return server;
+}
+export async function runServer() {
+  const server = makeMcpServer(await createSession(resolveConfig()));
   const transport = new StdioServerTransport();
   await server.connect(transport);
   log("server running on stdio");
