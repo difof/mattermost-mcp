@@ -1,5 +1,10 @@
 # @bryanberger/mattermost-mcp
 
+## 0.9.0 (fork)
+
+- Track how many inbox pulls returned each retained post. Pull only unread posts with `unread_only: true`; parallel agents share one counter without changing Mattermost read receipts.
+- Add a SQLite directory for the current account and joined DMs, groups and channels, updated from Mattermost independently of the post retention window.
+
 ## 0.8.1 (fork)
 
 - Recover retained posts across timestamp ties and stale channel activity counters after a restart. Check apparent deletions by ID and report partial recovery when a timestamp fills the largest history page.
