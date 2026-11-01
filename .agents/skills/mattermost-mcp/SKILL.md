@@ -1,6 +1,6 @@
 ---
 name: mattermost-mcp
-description: Use the configured Mattermost MCP to automate the authenticated account, including PAT personal-account workflows. Read or search existing DMs, group conversations, channels and threads; send messages and replies; manage membership, reactions, presence and files; or discover other Mattermost REST operations. Pull the rolling cache, subscribe temporarily, or manage authorized live service settings. Use Code Mode for discovery, batching, pagination and local filtering when available.
+description: Use the configured Mattermost MCP to automate the authenticated account, including PAT personal-account workflows. Read or search existing DMs, group conversations, channels and threads; send messages and replies; manage membership, reactions, presence and files; or discover other Mattermost REST operations. Find joined conversations, pull unread inbox posts, subscribe temporarily, or manage authorized live service settings. Use Code Mode for discovery, batching, pagination and local filtering when available.
 ---
 
 # Mattermost MCP
@@ -38,6 +38,10 @@ connection. Read only the reference relevant to the task:
    IDs needed for follow-up. A capped sample is not a complete conversation or time-range audit.
 
 ## Pull messages or wait for a reply
+
+For the account and its existing conversations, prefer `list_cached_conversations` when available. Page `channel_type: "D"` for DMs or `"G"` for groups. Verify exact peer or channel IDs before sending; an empty recent inbox does not mean a DM does not exist.
+
+For posts no agent has pulled yet, use `list_cached_messages({unread_only:true})` with the requested scope. Each returned row increments its shared `readCount` (first return: 1). Do not repeatedly poll an unfiltered inbox merely to check status: that counts as reading its rows. This does not mark messages read in Mattermost.
 
 For recent messages, discover `list_cached_messages` and combine the smallest useful filters: `direction`, `channel_type`, exact `sender_id` or `channel_id`, and `is_mention`. The shared service backfills the configured retention window after startup or reconnect (1–168 hours; default 48). Follow `nextCursor`. Check `syncState`: `recovering` is still catching up; `partial` means a very dense timestamp could not be fully verified. Do not report “none” from either; fetch the exact post if known. For temporary access-check errors, retry later. Use Mattermost history for older messages. Deleted or inaccessible posts cannot be recovered. For “let me know when…”, use `subscribe_messages` with a finite `ttl_seconds` and the same filters. OpenCode can use its current session automatically. Do not select another active session or create a permanent inbox. Save the returned subscription ID and cancel it when no longer needed. Read [the OpenCode recipe](references/opencode.md#wait-for-a-specific-message) for examples.
 
