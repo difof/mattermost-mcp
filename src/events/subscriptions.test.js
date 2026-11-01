@@ -151,6 +151,21 @@ it("keeps per-lease progress across restart and retries an uncertain callback wi
   expect(b).toHaveLength(1);
   expect(a[0].key).not.toBe(b[0].key);
 });
+it("backs off an unverified channel without delaying an independently authorized lease", async () => {
+  const h = await fixture();
+  const send = vi.fn(async () => new Response(null, { status: 204 }));
+  vi.stubGlobal("fetch", send);
+  h.leases.register({ callback_url: hookA, ttl_seconds: 30 }, { channelId: id(111) });
+  h.leases.register({ callback_url: hookB, ttl_seconds: 30 }, { channelId: id(333) });
+  h.authorize.mockResolvedValueOnce((channel) => (channel === id(333) ? true : undefined));
+  h.cache.applyBatch([post(1), post(2, { channelId: id(333) })]);
+  h.leases.wake();
+  await vi.advanceTimersByTimeAsync(80);
+  expect(send.mock.calls.map(([url]) => url)).toEqual([hookB]);
+  expect(h.leases.list().find((l) => l.callbackUrl === hookA).deliveryFailures).toBe(1);
+  await vi.advanceTimersByTimeAsync(2100);
+  expect(send.mock.calls.map(([url]) => url)).toEqual([hookB, hookA]);
+});
 it("does not send a different channel's candidate discovered after an authorization purge", async () => {
   const h = await fixture();
   const send = vi.fn(async () => new Response(null, { status: 204 }));
