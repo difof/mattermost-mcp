@@ -2,12 +2,15 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { openEventStream } from "./websocket.js";
 import { log } from "../log.js";
 import { selectPostedFrame } from "./filter.js";
-import { recoverPosts } from "./recovery.js";
+import { recoverUntilReady } from "./recovery-loop.js";
+import { readEventJson } from "./api.js";
 import { RETENTION_MS } from "./cache.js";
 
 async function consume({ session, cache, onStatus, signal }) {
   const stream = openEventStream(session, signal, cache.invalidateDirectory);
-  let me,
+  let snapshot,
+    unwatch,
+    me,
     channels,
     joined,
     recovery,
@@ -16,27 +19,29 @@ async function consume({ session, cache, onStatus, signal }) {
     for await (const item of stream) {
       if (item.type === "connected") {
         onStatus("recovering");
-        ({ me, channels: joined } = await cache.refreshDirectory(stream.signal));
+        snapshot = await cache.refreshDirectory(stream.signal);
+        ({ me, channels: joined } = snapshot);
+        unwatch = cache.watchMembership?.(stream.abort);
         // Recovery can deny post content even when metadata membership remains.
         channels = new Map(joined);
         // A timestamp-only incremental scan misses older posts edited/deleted offline.
         // Reconcile precisely the retained window; live events continue during pagination.
-        recovery = recoverPosts({
+        recovery = recoverUntilReady({
           session,
+          snapshot,
           channels,
-          me,
-          since: item.time - cache.retentionMs,
-          until: item.time,
           cache,
-          signal: stream.signal,
-        }).then(
-          (complete) => stream.push({ type: "ready", complete, time: item.time }),
-          stream.abort,
-        );
+          stream,
+          time: item.time,
+        }).catch(stream.abort);
       } else if (item.type === "ready") {
         recovered = item.complete;
         if (recovered) await cache.checkpoint(item.time);
-        onStatus(recovered ? "connected" : "partial");
+        onStatus(recovered ? "connected" : "partial", {
+          failedChannels: item.failedChannels,
+          ambiguousChannels: item.ambiguousChannels,
+          ...(recovered ? { lastCompleteAt: Date.now() } : {}),
+        });
       } else if (item.type === "checkpoint") {
         if (recovered) await cache.checkpoint(item.time);
       } else if (item.type === "directory") {
@@ -50,17 +55,19 @@ async function consume({ session, cache, onStatus, signal }) {
           stream.abort();
           break;
         }
+        snapshot = next;
         me = next.me;
       } else {
         const event = selectPostedFrame(item.frame, me);
         const channel = event && channels.get(event.channelId);
-        if (channel) {
+        if (channel && snapshot.isCurrent(channel.id)) {
           if (!event.deleted) event.channelType = channel.type;
           await cache.enqueue(event, item.frame.event);
         }
       }
     }
   } finally {
+    unwatch?.();
     await stream.close();
     await recovery;
   }
@@ -71,6 +78,7 @@ export function startListener({
   session,
   refreshDirectory,
   invalidateDirectory,
+  watchMembership,
   retentionMs = RETENTION_MS,
   checkpoint,
   enqueue,
@@ -83,6 +91,7 @@ export function startListener({
   const cache = {
     refreshDirectory,
     invalidateDirectory,
+    watchMembership,
     retentionMs,
     checkpoint,
     enqueue,
@@ -98,13 +107,19 @@ export function startListener({
     while (!signal.aborted) {
       try {
         onStatus("connecting");
+        const mode = session.config.auth?.mode;
+        if (failures && ["oauth2", "password"].includes(mode)) {
+          // A rejected socket upgrade has no REST response to trigger token recovery.
+          const me = await readEventJson(session, session.client.getUserRoute("me"), signal);
+          if (me?.id !== session.userId) throw new Error("Unexpected Mattermost event account");
+        }
         await consume({
           session,
           cache,
           signal,
-          onStatus: (state) => {
+          onStatus: (state, health) => {
             if (state === "connected" || state === "partial") failures = 0;
-            onStatus(state);
+            onStatus(state, health);
           },
         });
       } catch {
