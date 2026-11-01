@@ -1,3 +1,5 @@
+import { inboxStatusTool } from "./tools/inbox-status.js";
+import { resolveConversationTool } from "./tools/resolve-conversation.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { resolveConfig } from "./credentials.js";
@@ -10,16 +12,23 @@ import { subscriptionTools } from "./tools/subscriptions.js";
 import { log } from "./log.js";
 import { VERSION } from "./version.js";
 /** Each transport owns its MCP protocol state; the authenticated account can be shared. */
-export function makeMcpServer(session) {
+export function makeMcpServer(session, exchange) {
   const server = new Server(
     { name: "mattermost-mcp", version: VERSION },
     { capabilities: { tools: {} } },
   );
   // tools/list + tools/call dispatched from the registry, sharing the session.
   const tools = session.cache
-    ? [...allTools, cachedMessagesTool, cachedDirectoryTool, ...subscriptionTools]
+    ? [
+        ...allTools,
+        cachedMessagesTool,
+        cachedDirectoryTool,
+        inboxStatusTool,
+        resolveConversationTool,
+        ...subscriptionTools,
+      ]
     : allTools;
-  registerTools(server, tools, { session });
+  registerTools(server, tools, { session, exchange });
   return server;
 }
 export async function runServer() {
