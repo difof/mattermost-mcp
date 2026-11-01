@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { httpAdmission } from "./admission.js";
+import { dispatchExchange } from "./exchange.js";
 import { makeMcpServer } from "../server.js";
 import { makeAdminMcpServer } from "../service/admin-mcp.js";
 import { log } from "../log.js";
@@ -31,13 +32,14 @@ function loopbackRequest(req) {
   );
 }
 
-async function requestBody(req, limit) {
+async function requestBody(req, limit, slot) {
   if (Number(req.headers["content-length"]) > limit) return { status: 413 };
   let size = 0;
   const chunks = [];
   for await (const chunk of req.iterator({ destroyOnReturn: false })) {
     size += chunk.length;
     if (size > limit) return { status: 413 };
+    if (!slot.takeBody(chunk.length)) return { status: 429 };
     chunks.push(chunk);
   }
   try {
@@ -58,20 +60,12 @@ function unauthorized(res) {
   return reject(res, 401, "Bearer authentication required", { "www-authenticate": "Bearer" });
 }
 
-async function dispatch(mcp, req, res, value) {
-  try {
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined,
-      enableJsonResponse: true,
-    });
-    await mcp.connect(transport);
-    await transport.handleRequest(req, res, value);
-  } finally {
-    await mcp.close();
-  }
+function busy(res) {
+  return reject(res, 429, "MCP capacity reached; retry later", { "retry-after": "1" });
 }
 
 function requestHandler(sessionOrGetter, settings, admin) {
+  const admit = httpAdmission(settings);
   const acquire =
     typeof sessionOrGetter === "function"
       ? (sessionOrGetter.acquire ?? (() => ({ session: sessionOrGetter() })))
@@ -89,37 +83,66 @@ function requestHandler(sessionOrGetter, settings, admin) {
     if (req.headers["content-type"]?.split(";")[0].trim().toLowerCase() !== "application/json") {
       return reject(res, 415, "Expected application/json");
     }
-    const body = await requestBody(req, management ? ADMIN_BODY_BYTES : settings.maxBodyBytes);
-    if (body.status)
-      return reject(res, body.status, body.status === 413 ? "Request too large" : "Invalid JSON");
-    if (res.destroyed) return;
-    // A credential can rotate while a slow request is uploading its body.
-    if (!authorized(req, settings[key])) return unauthorized(res);
-    if (!management && body.size > settings.maxBodyBytes)
-      return reject(res, 413, "Request too large");
-    if (management) return dispatch(makeAdminMcpServer(admin), req, res, body.value);
-
-    const lease = acquire();
+    const slot = admit(management);
+    if (!slot) return busy(res);
+    let lease;
     try {
+      const body = await requestBody(
+        req,
+        management ? ADMIN_BODY_BYTES : settings.maxBodyBytes,
+        slot,
+      );
+      if (body.status === 429) return busy(res);
+      if (body.status)
+        return reject(res, body.status, body.status === 413 ? "Request too large" : "Invalid JSON");
+      if (res.destroyed) return;
+      // A credential can rotate while a slow request is uploading its body.
+      if (!authorized(req, settings[key])) return unauthorized(res);
+      if (!management && body.size > settings.maxBodyBytes)
+        return reject(res, 413, "Request too large");
+      if (Array.isArray(body.value))
+        return reject(res, 400, "Use one JSON-RPC message per request");
+      if (management)
+        return await dispatchExchange(
+          (exchange) => makeAdminMcpServer(admin, exchange),
+          req,
+          res,
+          body.value,
+        );
+
+      lease = acquire();
       if (!lease?.session || (settings.eventsEnabled && !lease.session.cache)) {
         return reject(res, 503, "MCP service is reconfiguring");
       }
-      return await dispatch(makeMcpServer(lease.session), req, res, body.value);
+      const outputLimit = slot.takeResult(lease.session.config.maxResponseBytes);
+      if (!outputLimit) return busy(res);
+      return await dispatchExchange(
+        (exchange) => makeMcpServer(lease.session, exchange),
+        req,
+        res,
+        body.value,
+        outputLimit,
+      );
     } finally {
       lease?.release?.();
+      slot.release();
     }
   };
 }
 
 export async function listenHttp(sessionOrGetter, settings, admin) {
   const handle = requestHandler(sessionOrGetter, settings, admin);
+  const active = new Set();
   const http = createServer({ requestTimeout: 30000, headersTimeout: 10000 }, (req, res) => {
-    handle(req, res).catch(() => {
-      if (res.destroyed) return;
-      log("HTTP request failed");
-      if (res.headersSent) res.destroy();
-      else reject(res, 500, "Internal error");
-    });
+    const job = handle(req, res)
+      .catch(() => {
+        if (res.destroyed) return;
+        log("HTTP request failed");
+        if (res.headersSent) res.destroy();
+        else reject(res, 500, "Internal error");
+      })
+      .finally(() => active.delete(job));
+    active.add(job);
   });
   await new Promise((resolve, reject) => {
     http.once("error", reject);
@@ -130,14 +153,17 @@ export async function listenHttp(sessionOrGetter, settings, admin) {
   });
   return {
     url: `http://${HOST}:${http.address().port}/mcp`,
-    close: () =>
-      new Promise((resolve, reject) => {
+    async close() {
+      await new Promise((resolve, reject) => {
         const timer = setTimeout(() => http.closeAllConnections(), 30000).unref();
         http.close((error) => {
           clearTimeout(timer);
           if (error) reject(error);
           else resolve();
         });
-      }),
+      });
+      // Closing a socket does not imply its handler has released the session.
+      await Promise.allSettled(active);
+    },
   };
 }
