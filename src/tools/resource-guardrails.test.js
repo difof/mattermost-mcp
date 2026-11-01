@@ -87,6 +87,7 @@ describe("resolved resource allowlists", () => {
     const result = await call(tool, { post_id: "post1", ...args });
     expect(result.isError).toBe(true);
     expect(body(result)).toContain("MM_CHANNEL_ALLOWLIST");
+    expect(body(result)).not.toContain("blocked");
     for (const method of [
       client.getPaginatedPostThread,
       client.patchPost,
