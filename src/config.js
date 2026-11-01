@@ -2,6 +2,7 @@ import { z } from "zod";
 import { isAbsolute } from "node:path";
 export const DEFAULT_OAUTH_REDIRECT = "http://127.0.0.1:7000/callback";
 export const DEFAULT_MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+export const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 export const DEFAULT_RESILIENCE = {
   timeoutMs: 30_000,
   maxRetries: 3,
@@ -103,6 +104,14 @@ const EnvSchema = z
     MM_TEAM_ALLOWLIST: z.string().optional(),
     MM_CHANNEL_ALLOWLIST: z.string().optional(),
     MM_MAX_MESSAGE_LEN: z.coerce.number().int().positive().default(16383),
+    MM_MAX_RESPONSE_BYTES: z.coerce
+      .number()
+      .int()
+      .positive()
+      .max(64 * 1024 * 1024)
+      .default(DEFAULT_MAX_RESPONSE_BYTES),
+    MM_ALLOW_SENSITIVE_READS: boolEnv("false"),
+    MM_CACHE_VERIFY_POSTS: boolEnv("false"),
     MM_UPLOAD_ROOTS: uploadRoots,
     MM_MAX_UPLOAD_BYTES: z.coerce
       .number()
@@ -193,6 +202,9 @@ export function loadConfig(env = process.env) {
       channelAllowlist: csvToList(e.MM_CHANNEL_ALLOWLIST),
       maxMessageLen: e.MM_MAX_MESSAGE_LEN,
     },
+    maxResponseBytes: e.MM_MAX_RESPONSE_BYTES,
+    allowSensitiveReads: e.MM_ALLOW_SENSITIVE_READS,
+    cacheVerifyPosts: e.MM_CACHE_VERIFY_POSTS,
     uploads: {
       roots: e.MM_UPLOAD_ROOTS,
       maxBytes: e.MM_MAX_UPLOAD_BYTES,
