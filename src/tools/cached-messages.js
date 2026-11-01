@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { postAccess } from "../events/post-presentation.js";
+import { receiptKey } from "../events/inbox.js";
 import { cacheAccess } from "../events/cache-access.js";
 
 const id = z.string().regex(/^[a-z0-9]{26}$/);
@@ -46,6 +48,13 @@ export const cachedMessagesTool = {
   inputSchema: z
     .object({
       ...cacheFilterShape,
+      request_id: z
+        .string()
+        .uuid()
+        .optional()
+        .describe(
+          "Optional unique UUID for this page. Retry the same UUID and arguments within 10 minutes without consuming twice.",
+        ),
       unread_only: z
         .boolean()
         .optional()
@@ -67,28 +76,37 @@ export const cachedMessagesTool = {
     })
     .strict(),
   compact: true,
-  handler: async (args, { session }) => {
+  handler: async (args, { session, callerSessionId, signal }) => {
     const cache = session.cache;
-    const access = await cacheAccess(session, cache);
+    const access = await cacheAccess(session, cache, signal);
     if (args.channel_id) {
       await access.check([args.channel_id]);
       if (!access.allows(args.channel_id))
         throw new Error("Channel is not an accessible joined channel");
     }
+    const posts = postAccess(session, cache, access, signal);
     const filters = {
       ...toCacheFilters(args),
       unreadOnly: args.unread_only,
       cursor: args.cursor,
       limit: args.limit,
     };
+    const receipt = receiptKey(args.request_id, callerSessionId, filters);
+    filters.excludedChannels = access.excluded;
     // A purge or a live post during a check can move unverified channels onto the
     // page. Only return a freshly read page (including its cursor) that passed.
     for (let checks = 0; ; checks++) {
-      const { page, unverified } = cache.pullPage(filters, access.allows);
+      const { page, unverified, unverifiedPosts } = cache.pullPage(
+        filters,
+        access.allows,
+        receipt,
+        posts,
+      );
       if (page) return { ...page, syncState: session.cacheStatus };
-      if (checks === 3)
+      if (checks === (posts ? 8 : 3))
         throw new Error("The cache page changed during access checks; retry this pull");
-      await access.check(unverified);
+      if (unverifiedPosts) await posts.check(unverifiedPosts);
+      else await access.check(unverified);
     }
   },
 };
