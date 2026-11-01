@@ -2,72 +2,90 @@ import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { log } from "../log.js";
-import { readSecretFile } from "../service/secret.js";
+import { openCache } from "./cache.js";
+import { callbackTargets } from "./callbacks.js";
+import { createSubscriptions } from "./subscriptions.js";
+import { listAccessibleChannels } from "./api.js";
 import { startListener } from "./listener.js";
-import { openOutbox } from "./outbox.js";
-import { openCodeDelivery, startDelivery } from "./delivery.js";
-
-export function eventSettings(env = process.env) {
-  const url = new URL(env.MM_OPENCODE_URL ?? "http://127.0.0.1:4096");
-  if (
-    url.protocol !== "http:" ||
-    !["127.0.0.1", "[::1]"].includes(url.hostname) ||
-    url.username ||
-    url.password ||
-    url.pathname !== "/" ||
-    url.search ||
-    url.hash
-  ) {
-    throw new Error("MM_OPENCODE_URL must be an HTTP loopback origin");
-  }
-  const sessionId = env.MM_OPENCODE_SESSION_ID;
-  if (!/^ses_[A-Za-z0-9]+$/.test(sessionId ?? ""))
-    throw new Error("Set a valid MM_OPENCODE_SESSION_ID");
-  if (!env.MM_OPENCODE_PASSWORD_FILE) throw new Error("Set MM_OPENCODE_PASSWORD_FILE");
-  const password = readSecretFile(env.MM_OPENCODE_PASSWORD_FILE);
-  if (!password || /[\r\n\0]/.test(password)) throw new Error("Invalid OpenCode password file");
-  const stateDir =
-    env.MM_EVENTS_STATE_DIR ||
-    join(env.XDG_STATE_HOME || join(homedir(), ".local", "state"), "mattermost-mcp");
-  if (!isAbsolute(stateDir)) throw new Error("MM_EVENTS_STATE_DIR must be absolute");
-  return { url: url.origin, sessionId, password, stateDir };
-}
 
 export async function startEvents({ config, session }) {
-  const settings = eventSettings();
+  const targets = callbackTargets();
+  const dir =
+    process.env.MM_EVENTS_STATE_DIR ||
+    join(process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"), "mattermost-mcp");
+  if (!isAbsolute(dir)) throw new Error("MM_EVENTS_STATE_DIR must be absolute");
   const account = JSON.stringify([config.url, session.userId]);
-  const scope = [
-    account,
-    settings.url,
-    settings.sessionId,
-    [...config.guardrails.teamAllowlist].sort(),
-    [...config.guardrails.channelAllowlist].sort(),
-  ];
-  const key = createHash("sha256").update(JSON.stringify(scope)).digest("hex");
-  const outbox = openOutbox(join(settings.stateDir, key + ".json"));
-  const pump = startDelivery(outbox, openCodeDelivery({ ...settings, account }));
+  const scope = createHash("sha256")
+    .update(
+      JSON.stringify([
+        account,
+        [...config.guardrails.teamAllowlist].sort(),
+        [...config.guardrails.channelAllowlist].sort(),
+      ]),
+    )
+    .digest("hex");
+  const cache = await openCache(join(dir, "cache", scope + ".sqlite3"));
+  let subscriptions, timer, stop;
+  const close = async () => {
+    clearInterval(timer);
+    try {
+      if (stop) await stop();
+    } finally {
+      try {
+        if (subscriptions) await subscriptions.stop();
+      } finally {
+        delete session.cacheStatus;
+        delete session.cache;
+        delete session.subscriptions;
+        cache.close();
+      }
+    }
+  };
   try {
-    const stop = await startListener({
-      session,
-      onStatus(state) {
-        if (state === "connected") log("Mattermost event listener connected; catch-up complete");
-      },
-      getCheckpoint: outbox.getCheckpoint,
-      checkpoint: outbox.checkpoint,
-      enqueue(event) {
-        outbox.enqueue(event);
-        pump.wake();
+    subscriptions = createSubscriptions({
+      cache,
+      targets,
+      account,
+      authorize: async (signal) => {
+        const channels = await listAccessibleChannels(session, signal);
+        cache.retainChannels(channels.keys());
       },
     });
-    return async () => {
+    session.cacheStatus = "connecting";
+    session.cache = cache;
+    session.subscriptions = subscriptions;
+    timer = setInterval(() => {
       try {
-        await stop();
-      } finally {
-        await pump.stop();
+        cache.prune();
+      } catch {
+        log("Message cache expiry cleanup delayed");
       }
-    };
+    }, 60000);
+    timer.unref();
+    stop = await startListener({
+      session,
+      checkpoint: cache.checkpoint,
+      enqueue(record) {
+        cache.apply(record);
+        subscriptions.wake();
+      },
+      enqueueBatch(records) {
+        cache.applyBatch(records);
+        subscriptions.wake();
+      },
+      retainChannels: cache.retainChannels,
+      purgeChannel: cache.purgeChannel,
+      cachedIds: cache.cachedIds,
+      reconcileMissing: cache.reconcileMissing,
+      onStatus(state) {
+        session.cacheStatus = state;
+        if (state === "connected")
+          log("Mattermost message cache connected; 48-hour catch-up complete");
+      },
+    });
+    return close;
   } catch (error) {
-    await pump.stop();
+    await close();
     throw error;
   }
 }
