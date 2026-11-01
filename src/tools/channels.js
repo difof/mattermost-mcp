@@ -171,44 +171,64 @@ const removeMember = {
   handler: (args, { session }) =>
     session.call((c) => c.removeFromChannel(args.user_id, args.channel_id)),
 };
-// ── 11. get_unreads ──────────────────────────────────────────────────────────
+// Native Mattermost unread counts are separate from the local MCP delivery counter.
 const getUnreads = {
   name: "get_unreads",
   title: "Get channel unreads",
   description:
-    "Return unread counts per channel for the authenticated user in a team (GET /users/me/teams/{tid}/channels/members, then GET /users/me/channels/{id}/unread).",
+    "Get native Mattermost unread counts in a team with bounded concurrency. Successful legacy calls return an array; partial failures return {channels,unavailableCount,partial:true}. Use detailed:true for a consistent object response.",
   inputSchema: z
     .object({
       team_id: routeSegment.describe("Team ID to query."),
+      detailed: z.boolean().optional(),
     })
     .strict(),
   resources: (args) => ({ teamId: args.team_id }),
-  resultScope: "channelItems",
-  handler: async (args, { session }) => {
+  handler: async (args, { session, resources, signal }) => {
     const memberships = await session.call((c) => c.getMyChannelMembers(args.team_id));
-    const { channelAllowlist } = session.config.guardrails;
-    const allowedMemberships = memberships.filter(
-      (m) => channelAllowlist.length === 0 || channelAllowlist.includes(m.channel_id),
-    );
-    const unreads = [];
-    for (const membership of allowedMemberships) {
-      // Membership.msg_count counts posts already read. Ask the unread endpoint
-      // for actual unread counts; Client4 11.6 has no dedicated method for it.
-      // https://docs.mattermost.com/api/reference/get-channel-unread
-      const unread = await session.call((c) =>
-        doClientFetch(
-          c,
-          `${c.getUserRoute("me")}/channels/${encodeURIComponent(membership.channel_id)}/unread`,
-          { method: "get" },
-        ),
-      );
-      unreads.push({
-        channel_id: unread.channel_id,
-        msg_count: unread.msg_count,
-        mention_count: unread.mention_count,
-      });
+    const allowed = session.config.guardrails.channelAllowlist;
+    const ids = [
+      ...new Set(
+        memberships
+          .map((m) => m.channel_id)
+          .filter((id) => !allowed.length || allowed.includes(id)),
+      ),
+    ];
+    const rows = new Array(ids.length);
+    let index = 0,
+      unavailableCount = 0;
+    async function worker() {
+      while (index < ids.length) {
+        signal?.throwIfAborted();
+        const i = index++,
+          id = ids[i];
+        try {
+          const unread = await session.call((c) =>
+            doClientFetch(
+              c,
+              c.getUserRoute("me") + "/channels/" + encodeURIComponent(id) + "/unread",
+              { method: "get" },
+            ),
+          );
+          if (unread.channel_id !== id) throw new Error("Unexpected unread channel");
+          if (!(await resources.channelAllowed(id))) continue;
+          rows[i] = {
+            channel_id: id,
+            msg_count: unread.msg_count,
+            mention_count: unread.mention_count,
+          };
+        } catch (error) {
+          signal?.throwIfAborted();
+          if (error?.status_code === 401) throw error;
+          unavailableCount++;
+        }
+      }
     }
-    return unreads;
+    await Promise.all(Array.from({ length: Math.min(4, ids.length) }, worker));
+    const channels = rows.filter(Boolean);
+    return args.detailed || unavailableCount
+      ? { channels, unavailableCount, partial: unavailableCount > 0 }
+      : channels;
   },
 };
 // ── 12. mark_channel_read ────────────────────────────────────────────────────
