@@ -200,7 +200,7 @@ it("caches received and sent posts locally and delivers only an explicitly subsc
     };
     service = await startService(env);
     const catalog = await service.client.listTools();
-    expect(catalog.tools).toHaveLength(42);
+    expect(catalog.tools).toHaveLength(44);
     expect(
       catalog.tools.find((t) => t.name === "list_cached_messages").annotations.readOnlyHint,
     ).toBe(false);
@@ -212,6 +212,10 @@ it("caches received and sent posts locally and delivers only an explicitly subsc
     expect(directory.account).toMatchObject(me);
     expect(directory.conversations.map((c) => c.id).sort()).toEqual([dm, room].sort());
     expect(directory.conversations.find((c) => c.id === dm)?.peerUserId).toBe(peer);
+    const status = await call(service.client, "get_inbox_status", { include_counts: true });
+    expect(status.counts).toMatchObject({ retained: 1, unread: 0 });
+    const resolved = await call(service.client, "resolve_conversation", { channel_id: dm });
+    expect(resolved).toMatchObject({ status: "resolved", conversation: { id: dm } });
     publish(incoming, "P");
     publish(sent, "D");
     await vi.waitFor(async () =>
