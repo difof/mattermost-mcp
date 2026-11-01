@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocketServer } from "ws";
 import { buildClient } from "../../mattermost/client.js";
-import { openCache, RETENTION_MS } from "../../events/cache.js";
+import { openCache } from "../../events/cache.js";
 import { selectPostedFrame } from "../../events/filter.js";
 import { startListener } from "../../events/listener.js";
 import { useMattermost } from "./mattermost-http-fixture.js";
@@ -88,8 +88,9 @@ it("reconciles the full rolling window while receiving live posts, fixes offline
     config: { guardrails: f.guardrails },
     call: (fn) => fn(client),
   };
+  const retentionHours = 72;
   const dir = await mkdtemp(join(tmpdir(), "mm-cache-recovery-")),
-    cache = await openCache(join(dir, "messages.sqlite"));
+    cache = await openCache(join(dir, "messages.sqlite"), { retentionHours });
   const ws = new WebSocketServer({ server: f.http, path: "/mattermost/api/v4/websocket" });
   const sockets = [],
     upgrades = [],
@@ -113,10 +114,10 @@ it("reconciles the full rolling window while receiving live posts, fixes offline
       reply: listed(posts),
       ...extra,
     });
-  const old = post("z", { create_at: Date.now() - RETENTION_MS - 3000 });
+  const old = post("z", { create_at: Date.now() - retentionHours * 3600000 - 3000 });
   const original = post("e"),
     laterDeleted = post("g"),
-    mine = post("m", { user_id: me.id });
+    mine = post("m", { user_id: me.id, create_at: Date.now() - 60 * 3600000 });
   const live = post("v", { edit_at: Date.now(), id: original.id, message: "latest live edit" });
   let release,
     entered = false;
