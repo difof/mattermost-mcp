@@ -1,3 +1,4 @@
+import { DEFAULT_CONCURRENCY } from "./admission.js";
 import { readSecretFile } from "../service/secret.js";
 
 function integer(value, name, max) {
@@ -32,6 +33,11 @@ export function httpSettings(env = process.env) {
     token,
     adminToken,
     port: integer(env.MM_HTTP_PORT || "8766", "MM_HTTP_PORT", 65535),
+    maxConcurrent: integer(
+      env.MM_HTTP_MAX_CONCURRENT || String(DEFAULT_CONCURRENCY),
+      "MM_HTTP_MAX_CONCURRENT",
+      32,
+    ),
     maxBodyBytes: integer(
       env.MM_HTTP_MAX_BODY_BYTES || "4194304",
       "MM_HTTP_MAX_BODY_BYTES",
