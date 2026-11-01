@@ -116,7 +116,7 @@ it("reconciles the full rolling window while receiving live posts, fixes offline
     });
   const old = post("z", { create_at: Date.now() - retentionHours * 3600000 - 3000 });
   const original = post("e"),
-    laterDeleted = post("g"),
+    laterDeleted = post("g", { create_at: original.create_at - 5 }),
     mine = post("m", { user_id: me.id, create_at: Date.now() - 60 * 3600000 });
   const live = post("v", { edit_at: Date.now(), id: original.id, message: "latest live edit" });
   let release,
@@ -131,7 +131,7 @@ it("reconciles the full rolling window while receiving live posts, fixes offline
       await hold;
     },
   });
-  page([mine, old], laterDeleted.id);
+  page([laterDeleted, mine, old], original.id);
   const stop = await startListener({
     session,
     ...cache,
@@ -165,6 +165,7 @@ it("reconciles the full rolling window while receiving live posts, fixes offline
       mine,
       old,
     ]);
+    f.expect("GET", "/posts/" + laterDeleted.id, { status: 404, reply: {} });
     sockets[0].send(JSON.stringify({ event: "typing", seq: 6 })); // event 5 was lost
     await vi.waitFor(() => expect(states.filter((x) => x === "connected")).toHaveLength(2), {
       timeout: 4500,
