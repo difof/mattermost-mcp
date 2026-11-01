@@ -40,21 +40,24 @@ The process uses the saved login. For environment-based credentials, see
 
 **Install this fork from source.** The upstream npm package does not include this fork's changes.
 
-For multiple local harnesses, run one [shared HTTP service](docs/shared-service.md). It can cache incoming and outgoing messages in local SQLite (48 hours by default) and send time-limited callbacks. Use the optional [admin connection](docs/admin-settings.md) to change settings live or reload rotated credentials.
+Use the [shared HTTP service and systemd installer](docs/shared-service.md) for multiple local clients, a rolling SQLite cache (default 48 hours), and temporary callbacks. The optional [admin connection](docs/admin-settings.md) can change settings live or reload rotated credentials.
 
 ## Agent skill
 
 Load [the Mattermost skill](.agents/skills/mattermost-mcp/SKILL.md) for efficient Code Mode,
 existing DM/group history and reliable writes. It includes focused OpenCode v2 examples.
 
-For use from any OpenCode project, run from this checkout:
+To link the current skill globally for OpenCode, run from this checkout:
 
 ```bash
-mkdir -p ~/.config/opencode/skills
-ln -s "$PWD/.agents/skills/mattermost-mcp" ~/.config/opencode/skills/
+skill="$PWD/.agents/skills/mattermost-mcp"
+dest="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/skills/mattermost-mcp"
+mkdir -p "$(dirname "$dest")"
+if [ ! -e "$dest" ] && [ ! -L "$dest" ]; then ln -s "$skill" "$dest"; fi
+test -L "$dest" && test "$dest/SKILL.md" -ef "$skill/SKILL.md"
 ```
 
-Load `@mattermost-mcp` in OpenCode. Other skill-capable harnesses can load the same folder;
+The last check verifies the link without overwriting another installation. Pulling updates in this checkout refreshes the linked skill. Load `@mattermost-mcp` in OpenCode. Other skill-capable harnesses can load the same folder;
 installing the MCP server alone does not register the skill globally.
 
 ## What it covers
