@@ -40,37 +40,43 @@ GETs are not health checks. The service only binds IPv4 loopback and validates H
 `MM_HTTP_PORT` defaults to 8766. `MM_HTTP_MAX_BODY_BYTES` defaults to 4 MiB (up to 256 MiB);
 this bounds the JSON envelope, separately from the upload limit for server-local file paths.
 
-## Incoming DMs and personal mentions
+## Rolling message cache
 
-Enable this only in the shared service, not in each client. No inbound Mattermost webhook,
-public endpoint or periodic model prompt is needed. Set:
+Set `MM_EVENTS_ENABLED=true` in the shared service to keep a local SQLite cache (Node.js **22.13+** with `node:sqlite`; the core MCP still supports Node 20). No OpenCode session, callback credential, or model is needed. The service opens an outbound Mattermost WebSocket as the configured account. The first connection and subsequent reconnects reconcile the most recent 48 hours of accessible history.
 
-| Variable                    | Value                                                                                                            |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `MM_EVENTS_ENABLED`         | `true` (default `false`)                                                                                         |
-| `MM_OPENCODE_URL`           | OpenCode service loopback HTTP origin, default `http://127.0.0.1:4096`                                           |
-| `MM_OPENCODE_SESSION_ID`    | One existing, explicitly chosen inbox session                                                                    |
-| `MM_OPENCODE_PASSWORD_FILE` | Owner-only private file containing the OpenCode service password                                                 |
-| `MM_EVENTS_STATE_DIR`       | Optional absolute private directory; default `$XDG_STATE_HOME/mattermost-mcp` or `~/.local/state/mattermost-mcp` |
+The cache contains text and identifiers from joined DMs, group DMs, private and public channels, including messages the account sent from other clients. It applies edits and deletes, omits system and burn-on-read posts, and does not copy file contents, embed previews or integration properties. Incoming means authored by someone else; outgoing means authored by this account. A mention is an explicit personal username in the message, not a broadcast or keyword notification.
 
-The account opens an outbound WebSocket and listens for new one-to-one DMs from others
-and explicit personal mentions in joined channels or groups. Own posts, system notices and
-broadcast-only mentions are ignored. The service sends IDs and the event type to the session's
-`/synthetic` endpoint with `delivery: "queue"` and `resume: true`. An idle inbox wakes;
-a busy one can finish its current work. The notification never authorizes a reply or an
-action requested by a correspondent. For a notification-only inbox, use session permissions
-to deny all tools except Code Mode and specifically required read tools (e.g. `mattermost_get_post`).
+Messages expire **48 hours after their original creation**, even if subsequently edited. Reads exclude expired rows immediately. Expired content is removed at startup, on reads/writes and every minute while the service is running. During downtime physical cleanup resumes at next start. Files are scoped by server, account and allowlists under `$XDG_STATE_HOME/mattermost-mcp/cache/` (default `~/.local/state/mattermost-mcp/cache/`); override the parent with `MM_EVENTS_STATE_DIR`. The DB is owner-only and contains private plaintext: retire obsolete scope files when changing accounts or guardrails. Cache pulls and callbacks recheck current channel access and fail closed if it cannot be verified.
 
-First launch starts at the current time. After a disconnect or process restart, the listener
-reconciles retained, accessible history from a checkpoint with overlap. Live events require
-Mattermost's recipient mention flag as well as the username; REST recovery uses the current
-unmodified text because the original mention flags aren't retained. Deleted/inaccessible
-posts and original mentions in edited channel posts cannot be reconstructed. Backfilled events
-may arrive out of posting order.
+## Pull or subscribe
 
-Pending ID-only notifications survive OpenCode outages and restart. Stable input IDs allow
-safe retries after an uncertain acknowledgement. No post bodies or credentials are stored in
-the outbox. State is scoped by Mattermost server/account, guardrails and destination session;
-changing scope starts a fresh checkpoint. Preserve state across upgrades. At 10,000 pending
-notifications intake applies backpressure instead of evicting notifications. Restore the
-destination if delivery is stalled and monitor the service journal for reconnects and retries.
+| MCP tool                     | Contract                                                                                                                                                                                                                                                               |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `list_cached_messages`       | Read immediately, newest first. Supply any combination of `channel_type` (D/G/O/P), `channel_id`, `sender_id`, `direction` (incoming/outgoing), `is_mention`, and a `since` creation time in epoch ms. Use `limit` (1–100, default 25) and `cursor` for further pages. |
+| `subscribe_messages`         | Match **future** posts using the same filters except `since`; supply `ttl_seconds` (1–172800). When called from OpenCode, omit the destination to use the caller's session metadata. Otherwise supply one explicit `session_id` or allowed `callback_url`.             |
+| `list_message_subscriptions` | List active registrations for this shared account and their expiry times.                                                                                                                                                                                              |
+| `unsubscribe_messages`       | Pass `subscription_id` to cancel. Already accepted deliveries cannot be recalled.                                                                                                                                                                                      |
+
+For a quick pull of your outgoing messages, call `list_cached_messages({"direction":"outgoing","limit":10})`. For mentions in one channel, combine `is_mention:true`, `direction:"incoming"` and its exact `channel_id`. Use `channel_type:"D"` and a verified `sender_id` for DMs from one person. Filters are ANDed; omit filters to include all qualifying posts. Cache queries return `{messages,nextCursor,syncState}` (a page may be incomplete while initial reconciliation is running) with bounded JSON; fetch the original post if a row reports truncation.
+
+An OpenCode agent waiting for a reply can call:
+
+```js
+return await tools.mattermost.subscribe_messages({
+  ttl_seconds: 1800,
+  direction: "incoming",
+  channel_type: "D",
+  sender_id: "RESOLVED_MATTERMOST_USER_ID",
+});
+```
+
+No polling or extra agent turn is needed while waiting. The service stores the registration, returns `subscriptionId` and `expiresAt` (epoch ms), and automatically expires it. Registering the same destination and filters renews the existing registration without replaying old posts. At most 64 registrations are active. These local writes are blocked by `MM_READ_ONLY=true`. All holders of the shared MCP bearer have the same account-level access to registered subscriptions.
+
+## Enable callback destinations
+
+- **OpenCode:** configure `MM_OPENCODE_URL` (loopback HTTP origin) and `MM_OPENCODE_PASSWORD_FILE` (private service password). These authorize an adapter; they do **not** choose or wake any session. The registered destination is `/api/session/{sessionID}/synthetic` and uses queued, resumable delivery. OpenCode v2 supplies its caller session in MCP request metadata. If a client does not supply it, pass an exact session ID or callback URL. Never guess the last active session.
+- **Other agents:** set `MM_CALLBACK_TARGETS_FILE` to a private JSON file listing exact approved callback URLs, for example `[{"url":"https://agent.example/hooks/mattermost","bearer_file":"/private/hook-token"}]`. The bearer file is optional. Use HTTPS or loopback HTTP; redirects, embedded credentials, query strings and fragments are rejected. The MCP caller cannot supply a credential or invent an arbitrary network destination.
+
+Callbacks carry **metadata only**: subscription, post, channel, sender and thread-root IDs, direction, channel type, mention flag and creation time. Pull the cached text or call `get_post` on demand. A webhook must return HTTP 2xx and should deduplicate its `Idempotency-Key`; OpenCode uses a stable synthetic input ID. An unacknowledged delivery is retried until the lease expires; a successful delivery advances its persistent cursor. While delivery is retrying, the subscription list includes `deliveryFailures` and `retryAt`. Only eligible posts still available in the rolling cache can be delivered. A notification never authorizes an automatic reply.
+
+**Upgrading from 0.6:** remove `MM_OPENCODE_SESSION_ID`. No legacy inbox/outbox deliveries are imported or replayed. With zero registrations, the service only caches messages.
