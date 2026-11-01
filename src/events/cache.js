@@ -2,7 +2,13 @@ import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync } from 
 import { dirname } from "node:path";
 import { isMattermostId } from "./filter.js";
 
-export const RETENTION_MS = 48 * 60 * 60 * 1000;
+export const DEFAULT_RETENTION_HOURS = 48;
+export const RETENTION_MS = DEFAULT_RETENTION_HOURS * 3600000;
+function retentionWindow(hours) {
+  if (!Number.isInteger(hours) || hours < 1 || hours > 168)
+    throw new Error("Cache retention must be an integer between 1 and 168 hours");
+  return hours * 3600000;
+}
 const PAGE_BYTES = 128 * 1024;
 const validTime = (n) => Number.isSafeInteger(n) && n >= 0;
 
@@ -137,7 +143,11 @@ function listMessages(db, options, cutoff) {
 }
 
 /** One synchronous SQLite connection per service; scope the filename to server, account and access policy. */
-export async function openCache(file, { now = Date.now } = {}) {
+export async function openCache(
+  file,
+  { now = Date.now, retentionHours = DEFAULT_RETENTION_HOURS, deferPrune = false } = {},
+) {
+  const retentionMs = retentionWindow(retentionHours);
   const DatabaseSync = process.getBuiltinModule?.("node:sqlite")?.DatabaseSync;
   if (!DatabaseSync)
     throw new Error("The SQLite message cache requires Node.js 22.13+ with node:sqlite");
@@ -145,7 +155,7 @@ export async function openCache(file, { now = Date.now } = {}) {
   const db = new DatabaseSync(file);
   try {
     createSchema(db);
-    return cacheOperations(db, now);
+    return cacheOperations(db, now, retentionMs, deferPrune);
   } catch (error) {
     db.close();
     throw error;
@@ -174,7 +184,7 @@ function createSchema(db) {
 const CLEAR =
   "senderId=NULL, rootId=NULL, channelType=NULL, direction=NULL, isMention=NULL, message=NULL, fileIds=NULL";
 
-function postWriter(db) {
+function postWriter(db, retentionMs) {
   const prior = db.prepare(
     "SELECT updatedAt, message IS NULL AS deleted FROM posts WHERE postId=?",
   );
@@ -205,7 +215,7 @@ function postWriter(db) {
     if (record.deleted) {
       // Mattermost emits just the root deletion when it also deletes every reply.
       // A root can predate retention even though its replies were posted today.
-      const observedAt = cutoff + RETENTION_MS;
+      const observedAt = cutoff + retentionMs;
       clearReplies.run(observedAt, channelId, postId, postId);
       if (!stored?.deleted) tombstone.run(postId, channelId, createdAt, observedAt);
       return false;
@@ -262,13 +272,13 @@ function transaction(db, run) {
   }
 }
 
-function cacheOperations(db, now) {
-  const write = postWriter(db);
+function cacheOperations(db, now, retentionMs, deferPrune) {
+  const write = postWriter(db, retentionMs);
   const expire = db.prepare(
     "DELETE FROM posts WHERE (message IS NOT NULL AND createdAt<=?) OR (message IS NULL AND updatedAt<=?)",
   );
   const removeOld = (cutoff) => expire.run(cutoff, cutoff).changes;
-  const prune = () => removeOld(now() - RETENTION_MS);
+  const prune = () => removeOld(now() - retentionMs);
   const readTime = db.prepare("SELECT time FROM checkpoint WHERE id=1");
   const setTime = db.prepare(
     "INSERT INTO checkpoint VALUES(1,?) ON CONFLICT(id) DO UPDATE SET time=excluded.time WHERE time<excluded.time",
@@ -284,16 +294,17 @@ function cacheOperations(db, now) {
     db.prepare(`UPDATE posts SET ${CLEAR},updatedAt=? WHERE channelId=? AND updatedAt<=?
       AND message IS NOT NULL AND (postId IN (SELECT value FROM json_each(?)) OR rootId IN (SELECT value FROM json_each(?)))`);
   const watermark = db.prepare("SELECT seq FROM sqlite_sequence WHERE name='posts'");
-  prune();
+  if (!deferPrune) prune();
   return {
     database: db,
+    retentionMs,
     highWatermark: () => watermark.get()?.seq ?? 0,
     nextMatching(filters, afterSeq, sinceMs) {
       if (!validTime(afterSeq) || !validTime(sinceMs))
         throw new Error("Invalid subscription cursor");
       const { where, args } = conditions(
         { ...filters, since: Math.max(filters.since ?? 0, sinceMs) },
-        now() - RETENTION_MS,
+        now() - retentionMs,
       );
       const row = db
         .prepare(
@@ -308,21 +319,21 @@ function cacheOperations(db, now) {
       setTime.run(time);
     },
     apply(record) {
-      const cutoff = now() - RETENTION_MS;
+      const cutoff = now() - retentionMs;
       return transaction(db, () => {
         removeOld(cutoff);
         return write(record, cutoff);
       });
     },
     applyBatch(records) {
-      const cutoff = now() - RETENTION_MS;
+      const cutoff = now() - retentionMs;
       return transaction(db, () => {
         removeOld(cutoff);
         return records.filter((record) => write(record, cutoff));
       });
     },
     list(options = {}) {
-      const cutoff = now() - RETENTION_MS;
+      const cutoff = now() - retentionMs;
       removeOld(cutoff);
       return listMessages(db, options, cutoff);
     },
@@ -334,7 +345,7 @@ function cacheOperations(db, now) {
     },
     cachedIds(channelId, since, until) {
       return ids
-        .all(channelId, Math.max(since, now() - RETENTION_MS + 1), until)
+        .all(channelId, Math.max(since, now() - retentionMs + 1), until)
         .map((r) => r.postId);
     },
     reconcileMissing(channelId, removed, until) {
