@@ -41,7 +41,7 @@ export const cachedMessagesTool = {
   name: "list_cached_messages",
   title: "List recently cached messages",
   description:
-    "Read the local 48-hour message cache, newest first. All supplied filters must match. For DMs from one person, use channel_type D and sender_id; for channel mentions, use is_mention and channel_id. Set direction outgoing for messages sent by this account. Current channel membership and allowlists are checked before each page. Continue with nextCursor and the same filters.",
+    "Read the local message cache within its configured retention window (default 48 hours), newest first. All supplied filters must match. For DMs from one person, use channel_type D and sender_id; for channel mentions, use is_mention and channel_id. Set direction outgoing for messages sent by this account. Current channel membership and allowlists are checked before each page. Continue with nextCursor and the same filters.",
   inputSchema: z
     .object({
       ...cacheFilterShape,
