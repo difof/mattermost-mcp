@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual as equal } from "node:util";
+import { inheritUploadProtection } from "../mattermost/upload-access.js";
 import { createSession } from "../mattermost/client.js";
 import { readInputs, serviceError, sessionConfig, verifyOpenCode, verifyUser } from "./inputs.js";
 import { effectiveSettings, patchOverrides, readOverrides } from "./settings.js";
@@ -31,6 +32,7 @@ function reloadInputs(previous, env, credentials) {
   } catch (error) {
     throw error.code === "INVALID_SETTINGS" ? error : serviceError("INVALID_CREDENTIALS");
   }
+  inheritUploadProtection(previous.config.uploads?.access, input.config.uploads?.access);
   credentials.check(input.http);
   // Reject a new origin or auth mechanism before sending replacement credentials.
   if (
@@ -67,7 +69,9 @@ export async function prepareSettingsChange(runtime, { mode, patch, expected }) 
   const config = sessionConfig(input.config, values);
   const previous = old.session.config;
   const newClient =
-    !equal(config.resilience, previous.resilience) || !equal(config.auth, previous.auth);
+    !equal(config.resilience, previous.resilience) ||
+    !equal(config.auth, previous.auth) ||
+    config.maxResponseBytes !== previous.maxResponseBytes;
   let session;
   try {
     session = await candidateSession(old.session, config, newClient, reload);
