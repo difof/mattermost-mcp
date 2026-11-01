@@ -5,7 +5,7 @@ import { log } from "../log.js";
 import { DEFAULT_RETENTION_HOURS, openCache } from "./cache.js";
 import { callbackTargets } from "./callbacks.js";
 import { createSubscriptions } from "./subscriptions.js";
-import { listAccessibleChannels } from "./api.js";
+import { cacheAccess } from "./cache-access.js";
 import { startListener } from "./listener.js";
 
 function defaultStateDir() {
@@ -13,19 +13,6 @@ function defaultStateDir() {
     process.env.MM_EVENTS_STATE_DIR ||
     join(process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"), "mattermost-mcp")
   );
-}
-
-function applyStorePolicy(cache, subscriptions) {
-  const db = cache.database;
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    cache.prune();
-    subscriptions.revokeDisabledTargets();
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
 }
 
 /** A staged runtime can be discarded before activation without pruning data or dispatching callbacks. */
@@ -75,7 +62,10 @@ export async function startEvents({
     if (stopListener) return;
     // Validation and all SQL statement preparation finished while the old runtime was live.
     // Shrinking retention and revoking removed callback destinations commit together.
-    applyStorePolicy(cache, subscriptions);
+    cache.transaction(() => {
+      cache.prune();
+      subscriptions.revokeDisabledTargets();
+    });
     session.cacheStatus = "connecting";
     session.cache = cache;
     session.subscriptions = subscriptions;
@@ -109,6 +99,8 @@ export async function startEvents({
         session.cacheStatus = state;
         if (state === "connected")
           log(`Mattermost message cache connected; ${retentionHours}-hour catch-up complete`);
+        else if (state === "partial")
+          log("Mattermost message cache live; history had an ambiguous timestamp boundary");
       },
     });
   };
@@ -119,9 +111,10 @@ export async function startEvents({
       targets,
       account,
       deferred: true,
-      authorize: async (signal) => {
-        const channels = await listAccessibleChannels(session, signal);
-        cache.retainChannels(channels.keys());
+      authorize: async (ids, signal) => {
+        const access = await cacheAccess(session, cache, signal);
+        await access.check(ids);
+        return access.allows;
       },
     });
     if (!deferActivation) await close.activate();
