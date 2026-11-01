@@ -92,6 +92,9 @@ const administrativePaths = [
 
 const destructivePaths = new Set(
   [
+    "/system/onboarding/complete",
+    "/reports/users/export",
+    "/exports/{export_name}/presign-url",
     "/actions/dialogs/execute",
     "/actions/dialogs/lookup",
     "/actions/dialogs/submit",
@@ -166,7 +169,14 @@ export function operationGuard(op) {
   const read =
     (["GET", "HEAD", "OPTIONS"].includes(method) && !mutatingGet) ||
     (method === "POST" && readOnlyPostPaths.has(op.path));
-  if (read) return { write: false, destructive: false };
+  if (read)
+    return {
+      write: false,
+      destructive: false,
+      ...(sensitiveReads.has(`${method} ${op.path}`)
+        ? { requires_sensitive_read_opt_in: true }
+        : {}),
+    };
 
   const destructive =
     method === "DELETE" ||
@@ -195,6 +205,20 @@ function matchingFields(value, name) {
     .map(([, field]) => field);
 }
 
+// Upstream can return an OAuth app secret, webhook capability or command token.
+const sensitiveReads = new Set(
+  [
+    "/oauth/apps",
+    "/oauth/apps/{app_id}",
+    "/hooks/incoming",
+    "/hooks/incoming/{hook_id}",
+    "/hooks/outgoing",
+    "/hooks/outgoing/{hook_id}",
+    "/commands",
+    "/commands/{command_id}",
+  ].map((path) => "GET /api/v4" + path),
+);
+
 /** Resource and credential boundaries, checked before any generic API HTTP. */
 export function assertApiAccess(op, args, session) {
   if (op.transport !== "http") {
@@ -216,6 +240,10 @@ export function assertApiAccess(op, args, session) {
   }
 
   const operation = `${op.method.toUpperCase()} ${op.path}`;
+  if (sensitiveReads.has(operation) && !session.config.allowSensitiveReads)
+    throw new GuardrailError(
+      "refused: enable MM_ALLOW_SENSITIVE_READS to access this credential-bearing operation",
+    );
   const ephemeral = operation === "POST /api/v4/posts/ephemeral";
   if (!messageOperations.has(operation) && !ephemeral) return;
   if (args.body_base64 !== undefined || args.body_file_path !== undefined) {
