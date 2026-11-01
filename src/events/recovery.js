@@ -73,9 +73,10 @@ async function* historyPages(session, channelId, since, signal) {
 
 // History pages are not a server-side snapshot. A concurrent deletion or reordered
 // tie can shift an offset; verify apparent misses by ID before clearing cached bodies.
-async function verifyMissing({ session, channel, missing, me, cache, signal, until }) {
+async function verifyMissing({ session, channel, missing, me, cache, signal, until, current }) {
   const removed = [];
   for (const id of missing) {
+    if (!current(channel.id)) return;
     let post;
     try {
       post = await readEventJson(session, session.client.getPostRoute(id), signal);
@@ -84,20 +85,24 @@ async function verifyMissing({ session, channel, missing, me, cache, signal, unt
       removed.push(id);
       continue;
     }
+    signal.throwIfAborted();
+    if (!current(channel.id)) return;
     if (post?.id !== id || post.channel_id !== channel.id) throw new Error("Invalid missing post");
     const record = selectPost(post, channel.type, me);
     if (record) await cache.enqueueBatch([record]);
     else removed.push(id);
   }
   signal.throwIfAborted();
-  if (removed.length) await cache.reconcileMissing(channel.id, removed, until);
+  if (removed.length && current(channel.id))
+    await cache.reconcileMissing(channel.id, removed, until);
 }
 
-async function replayChannel({ session, channel, since, until, me, cache, signal }) {
+async function replayChannel({ session, channel, since, until, me, cache, signal, current }) {
   const missing = new Set(await cache.cachedIds(channel.id, since, until));
   // LastPostAt is updated after the post commits and may be stale even on success.
   let complete = true;
   for await (const { posts, needsOffset } of historyPages(session, channel.id, since, signal)) {
+    if (!current(channel.id)) return true;
     if (needsOffset) complete = false;
     const batch = [];
     for (const post of posts) {
@@ -111,22 +116,53 @@ async function replayChannel({ session, channel, since, until, me, cache, signal
     signal.throwIfAborted();
     if (batch.length) await cache.enqueueBatch(batch);
   }
-  await verifyMissing({ session, channel, missing, me, cache, signal, until });
+  await verifyMissing({ session, channel, missing, me, cache, signal, until, current });
   return complete;
 }
 
-export async function recoverPosts({ session, channels, me, since, until, cache, signal }) {
+export async function recoverPosts({
+  session,
+  channels,
+  me,
+  since,
+  until,
+  cache,
+  signal,
+  current = () => true,
+  onUnavailable = () => {},
+  onAmbiguous = () => {},
+  onDenied = cache.purgeChannel,
+}) {
   let allComplete = true;
   for (const channel of channels.values()) {
     signal.throwIfAborted();
+    if (!current(channel.id)) continue;
     try {
-      const complete = await replayChannel({ session, channel, since, until, me, cache, signal });
-      if (!complete) allComplete = false;
+      const complete = await replayChannel({
+        session,
+        channel,
+        since,
+        until,
+        me,
+        cache,
+        signal,
+        current,
+      });
+      if (!complete) {
+        allComplete = false;
+        onAmbiguous(channel);
+      }
     } catch (error) {
-      if (![403, 404].includes(error?.status_code)) throw error;
-      // Membership can disappear between listing channels and reading their history.
-      channels.delete(channel.id);
-      await cache.purgeChannel(channel.id);
+      signal.throwIfAborted();
+      if (error?.status_code === 401) throw error;
+      if (!current(channel.id)) continue;
+      if ([403, 404].includes(error?.status_code)) await onDenied(channel.id);
+      else {
+        // A malformed or temporarily unavailable channel must not starve later
+        // channels, or force the healthy authenticated socket to disconnect.
+        allComplete = false;
+        onUnavailable(channel);
+      }
     }
   }
   return allComplete;
