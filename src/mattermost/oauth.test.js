@@ -246,7 +246,20 @@ describe("loopback callback", () => {
     const code = waitForCode(redirect, "expected-state");
     expect(server.listen).toHaveBeenCalledWith(7000, host);
     const response = { writeHead: vi.fn().mockReturnThis(), end: vi.fn() };
-    handler({ url: "/callback?state=expected-state&code=authorization-code" }, response);
+    // Invalid inputs must not throw from the request event or cancel another login.
+    for (const url of [
+      "//fixture:bad/",
+      "/callback?error=access_denied",
+      "/callback?state=wrong&code=invalid",
+    ]) {
+      handler({ method: "GET", url }, response);
+      expect(response.writeHead).toHaveBeenLastCalledWith(400);
+      expect(server.close).not.toHaveBeenCalled();
+    }
+    handler(
+      { method: "GET", url: "/callback?state=expected-state&code=authorization-code" },
+      response,
+    );
     await expect(code).resolves.toBe("authorization-code");
     expect(server.close).toHaveBeenCalledOnce();
   });
