@@ -2,7 +2,7 @@
 
 [Back to README](../README.md) · [Tool reference](tools.md) · [Testing](testing.md)
 
-The server exposes **37 MCP tools**: 34 convenience tools and three on-demand API tools.
+The server exposes **37 core MCP tools**: 34 convenience tools and three on-demand API tools. Four optional local cache/subscription tools sit outside the REST inventory.
 `api_call` covers **all 590 account-compatible core HTTP operations** in the pinned
 **Mattermost v11.11.1** inventory. `api_search` and `api_describe` load operation details locally.
 
