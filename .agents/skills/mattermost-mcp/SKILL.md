@@ -39,7 +39,11 @@ connection. Read only the reference relevant to the task:
 
 ## Pull messages or wait for a reply
 
-For recent messages, discover `list_cached_messages` and combine the smallest useful filters: `direction`, `channel_type`, exact `sender_id` or `channel_id`, and `is_mention`. This service-only cache covers the last 48 hours; use Mattermost history for older messages. For “let me know when…”, use `subscribe_messages` with a finite `ttl_seconds` and the same filters. OpenCode can use its current session automatically. Do not select another active session or create a permanent inbox. Save the returned subscription ID and cancel it when no longer needed. Read [the OpenCode recipe](references/opencode.md#wait-for-a-specific-message) for examples.
+For recent messages, discover `list_cached_messages` and combine the smallest useful filters: `direction`, `channel_type`, exact `sender_id` or `channel_id`, and `is_mention`. This service-only cache covers the configured window (48 hours by default); use Mattermost history for older messages. For “let me know when…”, use `subscribe_messages` with a finite `ttl_seconds` and the same filters. OpenCode can use its current session automatically. Do not select another active session or create a permanent inbox. Save the returned subscription ID and cancel it when no longer needed. Read [the OpenCode recipe](references/opencode.md#wait-for-a-specific-message) for examples.
+
+## Manage the shared service
+
+For a request to list or change **MCP service** settings or reload rotated credentials, discover the separately authorized `mattermost_admin` connection in the management workspace. Call `list_settings` first, then `set_settings` with the desired patch and returned revision. For a rotated credential call `reload_settings` after its configured private file has been updated. Never request the secret in chat. Report any pending restart and keep ordinary message tasks on `mattermost`.
 
 ## Match the result contract
 
