@@ -9,69 +9,79 @@ function within(root, path) {
   return suffix !== ".." && !suffix.startsWith(`..${sep}`) && !isAbsolute(suffix);
 }
 
+async function allowedPath(path, roots) {
+  const directories = await Promise.all(
+    roots.map(async (root) => {
+      const directory = await realpath(root);
+      if (!(await stat(directory)).isDirectory())
+        throw new Error("MM_UPLOAD_ROOTS entries must be directories");
+      return directory;
+    }),
+  );
+  const resolved = await realpath(path);
+  if (!directories.some((directory) => within(directory, resolved))) {
+    throw new Error("file_path is outside MM_UPLOAD_ROOTS (including resolved symlinks)");
+  }
+  return resolved;
+}
+
+async function inspectOpenedFile(file, path, maxBytes) {
+  const before = await file.stat({ bigint: true });
+  if (!before.isFile()) throw new Error("file_path must identify a regular file");
+  // Match the allowlisted pathname to the opened descriptor before reading any bytes.
+  const current = await stat(path, { bigint: true });
+  if ((await realpath(path)) !== path || current.dev !== before.dev || current.ino !== before.ino) {
+    throw new Error("upload file changed while opening; retry with a stable file");
+  }
+  if (before.size > BigInt(maxBytes)) throw new Error("upload exceeds MM_MAX_UPLOAD_BYTES");
+  return before;
+}
+
+async function readSnapshot(file, before) {
+  const bytes = Buffer.alloc(Number(before.size));
+  let offset = 0;
+  while (offset < bytes.length) {
+    const { bytesRead } = await file.read(bytes, offset, bytes.length - offset, offset);
+    if (!bytesRead) break;
+    offset += bytesRead;
+  }
+  // Probe one byte beyond the original size, never read an unbounded growing file.
+  const { bytesRead: extra } = await file.read(Buffer.alloc(1), 0, 1, bytes.length);
+  const after = await file.stat({ bigint: true });
+  if (
+    offset !== bytes.length ||
+    extra ||
+    before.size !== after.size ||
+    before.mtimeNs !== after.mtimeNs ||
+    before.ctimeNs !== after.ctimeNs
+  ) {
+    throw new Error("upload file changed while reading; retry with a stable file");
+  }
+  return bytes;
+}
+
 async function readLocalFile(path, roots, maxBytes) {
   if (!roots.length) throw new Error("local uploads are disabled; configure MM_UPLOAD_ROOTS");
   if (!isAbsolute(path) || path.includes("\0")) {
     throw new Error("file_path must be an absolute local path without shell expansion");
   }
-  let file;
   try {
-    const directories = await Promise.all(
-      roots.map(async (root) => {
-        const directory = await realpath(root);
-        if (!(await stat(directory)).isDirectory()) {
-          throw new Error("MM_UPLOAD_ROOTS entries must be directories");
-        }
-        return directory;
-      }),
-    );
-    const resolved = await realpath(path);
-    if (!directories.some((directory) => within(directory, resolved))) {
-      throw new Error("file_path is outside MM_UPLOAD_ROOTS (including resolved symlinks)");
-    }
+    const resolved = await allowedPath(path, roots);
     // Nonblocking open avoids a FIFO race; no-follow rejects a swapped final symlink.
-    file = await open(
+    const file = await open(
       resolved,
       constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0),
     );
-    const before = await file.stat({ bigint: true });
-    if (!before.isFile()) throw new Error("file_path must identify a regular file");
-    // Recheck the pathname against the opened descriptor before reading any bytes.
-    const current = await stat(resolved, { bigint: true });
-    if (
-      (await realpath(resolved)) !== resolved ||
-      current.dev !== before.dev ||
-      current.ino !== before.ino
-    ) {
-      throw new Error("upload file changed while opening; retry with a stable file");
+    try {
+      const before = await inspectOpenedFile(file, resolved, maxBytes);
+      return await readSnapshot(file, before);
+    } finally {
+      await file.close();
     }
-    if (before.size > BigInt(maxBytes)) throw new Error("upload exceeds MM_MAX_UPLOAD_BYTES");
-    const bytes = Buffer.alloc(Number(before.size));
-    let offset = 0;
-    while (offset < bytes.length) {
-      const { bytesRead } = await file.read(bytes, offset, bytes.length - offset, offset);
-      if (!bytesRead) break;
-      offset += bytesRead;
-    }
-    // Never read an unbounded growing file. Probe one byte beyond the original size.
-    const { bytesRead: extra } = await file.read(Buffer.alloc(1), 0, 1, bytes.length);
-    const after = await file.stat({ bigint: true });
-    if (
-      offset !== bytes.length ||
-      extra ||
-      before.size !== after.size ||
-      before.mtimeNs !== after.mtimeNs ||
-      before.ctimeNs !== after.ctimeNs
-    ) {
-      throw new Error("upload file changed while reading; retry with a stable file");
-    }
-    return bytes;
   } catch (error) {
-    // Filesystem errors can include full paths; surface the reason, never a data buffer.
+    // Filesystem errors can include full paths; surface only the reason.
     if (error.code) throw new Error(`cannot read upload file (${error.code})`);
     throw error;
-  } finally {
-    await file?.close();
   }
 }
 
