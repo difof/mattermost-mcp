@@ -2,6 +2,8 @@
 
 The optional `/mcp/admin` endpoint exposes three tools to a separately authenticated management client. It configures **this MCP service**, not the Mattermost server. The ordinary `/mcp` and stdio catalogs do not include these tools.
 
+The `limits` section of `list_settings` reports operator ceilings without revealing paths or secrets. Change bootstrap options through the service environment; do not pass credentials in an MCP call.
+
 ## Connect from OpenCode
 
 1. In a private directory, generate a fresh admin bearer: `(umask 077; openssl rand -hex 32 > admin-token)`. Use an unused filename. Keep this token separate from the normal HTTP bearer and the Mattermost PAT. Its file must be outside every `MM_UPLOAD_ROOTS` directory.
