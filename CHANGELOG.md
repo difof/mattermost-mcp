@@ -1,5 +1,12 @@
 # @bryanberger/mattermost-mcp
 
+## 0.8.1 (fork)
+
+- Recover retained posts across timestamp ties and stale channel activity counters after a restart. Check apparent deletions by ID and report partial recovery when a timestamp fills the largest history page.
+- Verify channel content permission before returning cached messages or sending a callback. A temporary verification failure keeps the cache private and available for retry.
+- Install the user service from a portable systemd template with an explicit launcher. See [setup and recovery](docs/shared-service.md).
+- Separate cache storage, live socket handling, credential reloads and request serialization into focused modules.
+
 ## 0.8.0 (fork)
 
 - Add an opt-in [management MCP](docs/admin-settings.md) for redacted settings inspection, persisted live changes, and reloading operator-owned credential files. Ordinary agents keep their separate bearer and tool catalog.
@@ -16,7 +23,7 @@
   [service](docs/shared-service.md). The default stdio command still works.
 - Deliver incoming DMs and personal mentions to a chosen OpenCode inbox with reconnect
   recovery and an ID-only outbox.
-- For Oven Tunnel's older stdio-only aggregate bridge, the [integration patch](examples/gpttun-http.patch)
+- For older stdio-only aggregate bridges, the [integration patch](examples/gpttun-http.patch)
   adds HTTP support for the Mattermost upstream while preserving other upstreams.
 
 ## 0.5.0
