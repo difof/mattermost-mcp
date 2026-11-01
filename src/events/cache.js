@@ -1,3 +1,5 @@
+import { presentationStore } from "./post-presentation.js";
+import { inboxOperations } from "./inbox.js";
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync } from "node:fs";
 import { dirname } from "node:path";
 import { listMessages, nextMatching } from "./cache-query.js";
@@ -5,7 +7,7 @@ import { CLEAR, postWriter, validTime } from "./cache-posts.js";
 
 export const DEFAULT_RETENTION_HOURS = 48;
 export const RETENTION_MS = DEFAULT_RETENTION_HOURS * 3600000;
-function retentionWindow(hours) {
+export function retentionWindow(hours) {
   if (!Number.isInteger(hours) || hours < 1 || hours > 168)
     throw new Error("Cache retention must be an integer between 1 and 168 hours");
   return hours * 3600000;
@@ -49,12 +51,17 @@ export async function openCache(
   privateFile(file);
   const db = new DatabaseSync(file);
   try {
-    createSchema(db);
-    return cacheOperations(db, now, retentionMs, deferPrune);
+    return initializeCache(db, now, retentionMs, deferPrune);
   } catch (error) {
     db.close();
     throw error;
   }
+}
+
+// Also used to build the reference schema in memory for offline maintenance.
+export function initializeCache(db, now, retentionMs, deferPrune = true) {
+  createSchema(db);
+  return cacheOperations(db, now, retentionMs, deferPrune);
 }
 
 function createSchema(db) {
@@ -80,6 +87,11 @@ function createSchema(db) {
       db.exec(
         "ALTER TABLE posts ADD COLUMN readCount INTEGER NOT NULL DEFAULT 0 CHECK(readCount >= 0)",
       );
+    }
+    // A verified single-post projection takes precedence over a same-version
+    // bulk history result, including after a restart with different plugin hooks.
+    if (!db.prepare("SELECT 1 FROM pragma_table_info('posts') WHERE name='verifiedView'").get()) {
+      db.exec("ALTER TABLE posts ADD COLUMN verifiedView INTEGER NOT NULL DEFAULT 0");
     }
     db.exec(
       "CREATE INDEX IF NOT EXISTS unread_timeline ON posts(createdAt DESC, postId DESC) WHERE message IS NOT NULL AND readCount=0",
@@ -121,17 +133,26 @@ function cacheOperations(db, now, retentionMs, deferPrune) {
     db.prepare(`UPDATE posts SET ${CLEAR},updatedAt=? WHERE channelId=? AND updatedAt<=?
       AND message IS NOT NULL AND (postId IN (SELECT value FROM json_each(?)) OR rootId IN (SELECT value FROM json_each(?)))`);
   const watermark = db.prepare("SELECT seq FROM sqlite_sequence WHERE name='posts'");
-  const countPage = db.prepare(
-    "UPDATE posts SET readCount=readCount+1 WHERE postId IN (SELECT value FROM json_each(?))",
-  );
   const list = (options, delivering = false) => {
     const cutoff = now() - retentionMs;
     removeOld(cutoff);
     return listMessages(db, options, cutoff, delivering);
   };
+  const inbox = inboxOperations(db, {
+    list,
+    now,
+    retentionMs,
+    transaction: (run) => transaction(db, run),
+  });
   if (!deferPrune) prune();
   return {
     database: db,
+    presentation: presentationStore(
+      db,
+      (run) => transaction(db, run),
+      write,
+      () => now() - retentionMs,
+    ),
     retentionMs,
     transaction: (operation) => transaction(db, operation),
     highWatermark: () => watermark.get()?.seq ?? 0,
@@ -149,28 +170,15 @@ function cacheOperations(db, now, retentionMs, deferPrune) {
         return write(record, cutoff);
       });
     },
-    applyBatch(records) {
+    applyBatch(records, { authoritative = false } = {}) {
       const cutoff = now() - retentionMs;
       return transaction(db, () => {
         removeOld(cutoff);
-        return records.filter((record) => write(record, cutoff));
+        return records.filter((record) => write(record, cutoff, authoritative));
       });
     },
     list: (options = {}) => list(options),
-    pullPage(options, allows) {
-      // Never hold a SQLite lock during network checks. Re-select inside this
-      // transaction so concurrent unread pulls cannot both claim the same row.
-      return transaction(db, () => {
-        const page = list(options, true);
-        const unverified = [...new Set(page.messages.map((row) => row.channelId))].filter(
-          (id) => !allows(id),
-        );
-        if (unverified.length) return { unverified };
-        if (page.messages.length)
-          countPage.run(JSON.stringify(page.messages.map((row) => row.postId)));
-        return { page };
-      });
-    },
+    ...inbox,
     purgeChannel(channelId) {
       purge.run(channelId);
     },
@@ -186,7 +194,11 @@ function cacheOperations(db, now, retentionMs, deferPrune) {
       const keys = JSON.stringify([...removed]);
       missing.run(until, channelId, until, keys, keys);
     },
-    prune,
+    prune() {
+      const removed = prune();
+      inbox.pruneReceipts();
+      return removed;
+    },
     close: () => db.close(),
   };
 }
