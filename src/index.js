@@ -3,10 +3,11 @@ import { VERSION } from "./version.js";
 import { log } from "./log.js";
 const HELP = `mattermost-mcp ${VERSION}
 
-MCP (stdio) server for the Mattermost REST API v4.
+MCP server for the Mattermost REST API v4.
 
 Usage:
   mattermost-mcp               Start the MCP server on stdio (default; used by MCP clients)
+  mattermost-mcp serve         Run the shared loopback HTTP MCP service
   mattermost-mcp login         Authenticate and save credentials to the config dir
   mattermost-mcp login --gitlab  Log in through a browser SSO window (GitLab/SAML; no admin needed)
   mattermost-mcp status        Show the current identity and server
@@ -23,6 +24,10 @@ async function main() {
     case undefined:
       // No args: an MCP client launched us — serve on stdio.
       await (await import("./server.js")).runServer();
+      return;
+    case "serve":
+      if (process.argv.length !== 3) throw new Error("Usage: mattermost-mcp serve");
+      await (await import("./commands/serve.js")).runServe();
       return;
     case "login":
       await (await import("./commands/login.js")).runLogin(process.argv.slice(3));
