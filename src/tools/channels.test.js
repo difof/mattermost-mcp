@@ -175,15 +175,22 @@ describe("get_unreads", () => {
     expect(JSON.parse(text)).toEqual([]);
     expect(doFetch).not.toHaveBeenCalled();
   });
-  it("surfaces a failed unread request instead of reporting a misleading count", async () => {
+  it("returns readable channels when one membership is temporarily unavailable", async () => {
     const client = new mattermost.Client4();
     client.setUrl("http://mm.test");
     vi.spyOn(client, "getMyChannelMembers").mockResolvedValue([
       { channel_id: "ch1", msg_count: 96 },
+      { channel_id: "ch2", msg_count: 42 },
     ]);
-    vi.spyOn(client, "doFetch").mockRejectedValue(new Error("unread endpoint failed"));
+    vi.spyOn(client, "doFetch")
+      .mockRejectedValueOnce(new Error("unread endpoint failed"))
+      .mockResolvedValueOnce({ channel_id: "ch2", msg_count: 1, mention_count: 0 });
     const { text, isError } = await call("get_unreads", { team_id: "tm1" }, {}, client);
-    expect(isError).toBe(true);
-    expect(text).toBe("unread endpoint failed");
+    expect(isError).toBe(false);
+    expect(JSON.parse(text)).toEqual({
+      channels: [{ channel_id: "ch2", msg_count: 1, mention_count: 0 }],
+      partial: true,
+      unavailableCount: 1,
+    });
   });
 });
