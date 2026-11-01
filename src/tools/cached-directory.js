@@ -16,6 +16,12 @@ export const cachedDirectoryTool = {
       channel_id: id.optional(),
       team_id: id.optional(),
       peer_user_id: id.optional().describe("Exact other user ID for a one-to-one or self DM."),
+      exact_name: z
+        .string()
+        .min(1)
+        .max(256)
+        .optional()
+        .describe("Exact channel name (not its display name)."),
       query: z
         .string()
         .trim()
@@ -24,13 +30,20 @@ export const cachedDirectoryTool = {
         .optional()
         .describe("Literal text in the channel name or display name."),
       limit: z.number().int().min(1).max(100).default(25),
-      cursor: id.optional().describe("Use nextCursor from the prior page with the same filters."),
+      cursor: z
+        .string()
+        .regex(/^[a-z0-9]{26}(?:\.[0-9a-f-]{36})?$/)
+        .optional()
+        .describe("Use nextCursor from the prior page with the same filters."),
     })
     .strict(),
   compact: true,
-  async handler(args, { session }) {
+  async handler(args, { session, signal }) {
     const cache = session.cache;
-    await cache.refreshDirectory();
-    return cache.directory.list(args);
+    return cache.directoryPage(
+      args,
+      () => ["connected", "partial"].includes(session.cacheStatus),
+      signal,
+    );
   },
 };
