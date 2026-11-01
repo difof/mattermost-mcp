@@ -23,7 +23,7 @@ message describing the failure.
 
 ## Shared service: cached messages and timed subscriptions (4)
 
-With the SQLite cache enabled, use `list_cached_messages` for a quick pull or `subscribe_messages` for a time-limited callback. `list_message_subscriptions` and `unsubscribe_messages` manage existing registrations. See [filters, sample calls, and retention](shared-service.md#pull-or-subscribe).
+With the SQLite cache enabled, use `list_cached_conversations` for the account and joined conversations, `list_cached_messages` for an inbox pull (`unread_only: true` returns previously undelivered posts) or `subscribe_messages` for a time-limited callback. `list_message_subscriptions` and `unsubscribe_messages` manage existing registrations. See [filters, sample calls, and retention](shared-service.md#pull-or-subscribe).
 
 ## Full API (3)
 
