@@ -16,6 +16,25 @@ const ping = { operation: "GET /api/v4/system/ping" };
 describe("generic API access, error, and retry policy through MCP and HTTP", () => {
   const fixture = useMattermost();
 
+  it("gates administrative aliases and credential-bearing reads before dispatch", async () => {
+    const mm = fixture();
+    for (const args of [
+      { operation: "POST /api/v4/reports/users/export" },
+      {
+        operation: "POST /api/v4/exports/{export_name}/presign-url",
+        path: { export_name: "fixture" },
+      },
+      { operation: "POST /api/v4/system/onboarding/complete" },
+    ]) {
+      expect(await mm.error("api_call", { ...args, confirm: true })).toContain(
+        "MM_ALLOW_DESTRUCTIVE",
+      );
+    }
+    for (const operation of ["GET /api/v4/hooks/incoming", "GET /api/v4/oauth/apps"]) {
+      expect(await mm.error("api_call", { operation })).toContain("MM_ALLOW_SENSITIVE_READS");
+    }
+  });
+
   it("allows actual reads in read-only mode, including safe POST lookups, and blocks writes", async () => {
     const mm = fixture();
     mm.guardrails.readOnly = true;
