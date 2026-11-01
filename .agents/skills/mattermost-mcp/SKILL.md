@@ -1,6 +1,6 @@
 ---
 name: mattermost-mcp
-description: Use the configured Mattermost MCP to automate the authenticated account, including PAT personal-account workflows. Read or search existing DMs, group conversations, channels and threads; send messages and replies; manage membership, reactions, presence and files; or discover other Mattermost REST operations. Use Code Mode for efficient discovery, batching, pagination and local result filtering when the agent harness supports it.
+description: Use the configured Mattermost MCP to automate the authenticated account, including PAT personal-account workflows. Read or search existing DMs, group conversations, channels and threads; send messages and replies; manage membership, reactions, presence and files; or discover other Mattermost REST operations. Pull the rolling cache, subscribe temporarily, or manage authorized live service settings. Use Code Mode for discovery, batching, pagination and local filtering when available.
 ---
 
 # Mattermost MCP
@@ -39,7 +39,7 @@ connection. Read only the reference relevant to the task:
 
 ## Pull messages or wait for a reply
 
-For recent messages, discover `list_cached_messages` and combine the smallest useful filters: `direction`, `channel_type`, exact `sender_id` or `channel_id`, and `is_mention`. This service-only cache covers the configured window (48 hours by default); use Mattermost history for older messages. For “let me know when…”, use `subscribe_messages` with a finite `ttl_seconds` and the same filters. OpenCode can use its current session automatically. Do not select another active session or create a permanent inbox. Save the returned subscription ID and cancel it when no longer needed. Read [the OpenCode recipe](references/opencode.md#wait-for-a-specific-message) for examples.
+For recent messages, discover `list_cached_messages` and combine the smallest useful filters: `direction`, `channel_type`, exact `sender_id` or `channel_id`, and `is_mention`. The shared service backfills the configured retention window after startup or reconnect (1–168 hours; default 48). Follow `nextCursor`. Check `syncState`: `recovering` is still catching up; `partial` means a very dense timestamp could not be fully verified. Do not report “none” from either; fetch the exact post if known. For temporary access-check errors, retry later. Use Mattermost history for older messages. Deleted or inaccessible posts cannot be recovered. For “let me know when…”, use `subscribe_messages` with a finite `ttl_seconds` and the same filters. OpenCode can use its current session automatically. Do not select another active session or create a permanent inbox. Save the returned subscription ID and cancel it when no longer needed. Read [the OpenCode recipe](references/opencode.md#wait-for-a-specific-message) for examples.
 
 ## Manage the shared service
 
