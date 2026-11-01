@@ -30,7 +30,7 @@ export function doClientFetch(client, url, options) {
  * Verifies credentials with a `GET /users/me` smoke call (also our identity).
  * Throws (fails fast) on auth or connectivity errors.
  */
-export async function createSession(config) {
+export async function createSession(config, { verify = (client) => client.getMe() } = {}) {
   const { auth, url } = config;
   const resilience = config.resilience ?? DEFAULT_RESILIENCE;
   const client = buildClient(url, resilience.timeoutMs);
@@ -88,7 +88,7 @@ export async function createSession(config) {
   let me;
   try {
     await authenticate();
-    me = await client.getMe();
+    me = await verify(client);
   } catch (err) {
     throw new Error(
       `Mattermost authentication failed (mode=${auth.mode}): ${formatMattermostError(err)}. ` +
