@@ -40,13 +40,15 @@ GETs are not health checks. The service only binds IPv4 loopback and validates H
 `MM_HTTP_PORT` defaults to 8766. `MM_HTTP_MAX_BODY_BYTES` defaults to 4 MiB (up to 256 MiB);
 this bounds the JSON envelope, separately from the upload limit for server-local file paths.
 
+To inspect and change the running service, configure the separate [admin connection](admin-settings.md). It is optional and does not add tools to ordinary clients.
+
 ## Rolling message cache
 
-Set `MM_EVENTS_ENABLED=true` in the shared service to keep a local SQLite cache (Node.js **22.13+** with `node:sqlite`; the core MCP still supports Node 20). No OpenCode session, callback credential, or model is needed. The service opens an outbound Mattermost WebSocket as the configured account. The first connection and subsequent reconnects reconcile the most recent 48 hours of accessible history.
+Set `MM_EVENTS_ENABLED=true` in the shared service to keep a local SQLite cache (Node.js **22.13+** with `node:sqlite`; the core MCP still supports Node 20). No OpenCode session, callback credential, or model is needed. The service opens an outbound Mattermost WebSocket as the configured account. The first connection and subsequent reconnects reconcile accessible history over the configured retention window (default 48 hours).
 
 The cache contains text and identifiers from joined DMs, group DMs, private and public channels, including messages the account sent from other clients. It applies edits and deletes, omits system and burn-on-read posts, and does not copy file contents, embed previews or integration properties. Incoming means authored by someone else; outgoing means authored by this account. A mention is an explicit personal username in the message, not a broadcast or keyword notification.
 
-Messages expire **48 hours after their original creation**, even if subsequently edited. Reads exclude expired rows immediately. Expired content is removed at startup, on reads/writes and every minute while the service is running. During downtime physical cleanup resumes at next start. Files are scoped by server, account and allowlists under `$XDG_STATE_HOME/mattermost-mcp/cache/` (default `~/.local/state/mattermost-mcp/cache/`); override the parent with `MM_EVENTS_STATE_DIR`. The DB is owner-only and contains private plaintext: retire obsolete scope files when changing accounts or guardrails. Cache pulls and callbacks recheck current channel access and fail closed if it cannot be verified.
+Messages expire based on their **original creation time**, even if subsequently edited. Set the startup default with `MM_RETENTION_HOURS` (1–168, default 48), or change `retention_hours` live through the [admin tools](admin-settings.md#list-set-reload). Reads exclude expired rows immediately. Expired content is removed at startup, on reads/writes and every minute while caching is enabled. During downtime physical cleanup resumes at next start. Files are scoped by server, account and allowlists under `$XDG_STATE_HOME/mattermost-mcp/cache/` (default `~/.local/state/mattermost-mcp/cache/`); override the parent with `MM_EVENTS_STATE_DIR`. The DB is owner-only and contains private plaintext: retire obsolete scope files when changing accounts or resource allowlists. Cache pulls and callbacks recheck current channel access and fail closed if it cannot be verified.
 
 ## Pull or subscribe
 
