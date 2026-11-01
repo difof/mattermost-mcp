@@ -74,6 +74,17 @@ function createSchema(db) {
       CREATE INDEX IF NOT EXISTS tombstone_age ON posts(updatedAt) WHERE message IS NULL;
       CREATE TABLE IF NOT EXISTS checkpoint (id INTEGER PRIMARY KEY CHECK(id=1), time INTEGER NOT NULL);
     `);
+  // Older cache files have no delivery history. Preserve their posts and leases.
+  transaction(db, () => {
+    if (!db.prepare("SELECT 1 FROM pragma_table_info('posts') WHERE name='readCount'").get()) {
+      db.exec(
+        "ALTER TABLE posts ADD COLUMN readCount INTEGER NOT NULL DEFAULT 0 CHECK(readCount >= 0)",
+      );
+    }
+    db.exec(
+      "CREATE INDEX IF NOT EXISTS unread_timeline ON posts(createdAt DESC, postId DESC) WHERE message IS NOT NULL AND readCount=0",
+    );
+  });
 }
 
 function transaction(db, run) {
@@ -110,6 +121,14 @@ function cacheOperations(db, now, retentionMs, deferPrune) {
     db.prepare(`UPDATE posts SET ${CLEAR},updatedAt=? WHERE channelId=? AND updatedAt<=?
       AND message IS NOT NULL AND (postId IN (SELECT value FROM json_each(?)) OR rootId IN (SELECT value FROM json_each(?)))`);
   const watermark = db.prepare("SELECT seq FROM sqlite_sequence WHERE name='posts'");
+  const countPage = db.prepare(
+    "UPDATE posts SET readCount=readCount+1 WHERE postId IN (SELECT value FROM json_each(?))",
+  );
+  const list = (options, delivering = false) => {
+    const cutoff = now() - retentionMs;
+    removeOld(cutoff);
+    return listMessages(db, options, cutoff, delivering);
+  };
   if (!deferPrune) prune();
   return {
     database: db,
@@ -137,10 +156,20 @@ function cacheOperations(db, now, retentionMs, deferPrune) {
         return records.filter((record) => write(record, cutoff));
       });
     },
-    list(options = {}) {
-      const cutoff = now() - retentionMs;
-      removeOld(cutoff);
-      return listMessages(db, options, cutoff);
+    list: (options = {}) => list(options),
+    pullPage(options, allows) {
+      // Never hold a SQLite lock during network checks. Re-select inside this
+      // transaction so concurrent unread pulls cannot both claim the same row.
+      return transaction(db, () => {
+        const page = list(options, true);
+        const unverified = [...new Set(page.messages.map((row) => row.channelId))].filter(
+          (id) => !allows(id),
+        );
+        if (unverified.length) return { unverified };
+        if (page.messages.length)
+          countPage.run(JSON.stringify(page.messages.map((row) => row.postId)));
+        return { page };
+      });
     },
     purgeChannel(channelId) {
       purge.run(channelId);
