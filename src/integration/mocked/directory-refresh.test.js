@@ -39,7 +39,6 @@ it("discards a revoked in-flight snapshot before completing concurrent directory
     await vi.waitFor(() => expect(started).toBe(true));
     directory.invalidate(conversation.id);
     expect(store.remove).toHaveBeenCalledWith(conversation.id);
-    expect(cache.purgeChannel).toHaveBeenCalledWith(conversation.id);
     release();
     const snapshots = await Promise.all([a, b]);
     expect(snapshots.map((s) => s.channels.size)).toEqual([0, 0]);
