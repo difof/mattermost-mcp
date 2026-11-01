@@ -2,18 +2,42 @@ import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { log } from "../log.js";
-import { openCache } from "./cache.js";
+import { DEFAULT_RETENTION_HOURS, openCache } from "./cache.js";
 import { callbackTargets } from "./callbacks.js";
 import { createSubscriptions } from "./subscriptions.js";
 import { listAccessibleChannels } from "./api.js";
 import { startListener } from "./listener.js";
 
-export async function startEvents({ config, session }) {
-  const targets = callbackTargets();
-  const dir =
+function defaultStateDir() {
+  return (
     process.env.MM_EVENTS_STATE_DIR ||
-    join(process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"), "mattermost-mcp");
-  if (!isAbsolute(dir)) throw new Error("MM_EVENTS_STATE_DIR must be absolute");
+    join(process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"), "mattermost-mcp")
+  );
+}
+
+function applyStorePolicy(cache, subscriptions) {
+  const db = cache.database;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    cache.prune();
+    subscriptions.revokeDisabledTargets();
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+/** A staged runtime can be discarded before activation without pruning data or dispatching callbacks. */
+export async function startEvents({
+  config,
+  session,
+  retentionHours = DEFAULT_RETENTION_HOURS,
+  targets = callbackTargets(),
+  stateDir = defaultStateDir(),
+  deferActivation = false,
+}) {
+  if (!isAbsolute(stateDir)) throw new Error("MM_EVENTS_STATE_DIR must be absolute");
   const account = JSON.stringify([config.url, session.userId]);
   const scope = createHash("sha256")
     .update(
@@ -24,46 +48,50 @@ export async function startEvents({ config, session }) {
       ]),
     )
     .digest("hex");
-  const cache = await openCache(join(dir, "cache", scope + ".sqlite3"));
-  let subscriptions, timer, stop;
-  const close = async () => {
-    clearInterval(timer);
-    try {
-      if (stop) await stop();
-    } finally {
-      try {
-        if (subscriptions) await subscriptions.stop();
-      } finally {
+  // Retention and credentials are not part of the identity: preserve cursors and leases on reload.
+  const cache = await openCache(join(stateDir, "cache", scope + ".sqlite3"), {
+    retentionHours,
+    deferPrune: true,
+  });
+  let subscriptions, timer, stopListener, closing;
+
+  const close = () =>
+    (closing ??= (async () => {
+      clearInterval(timer);
+      const results = await Promise.allSettled([stopListener?.(), subscriptions?.stop()]);
+      // An unactivated candidate may reference the same session as the active service.
+      if (session.cache === cache) {
         delete session.cacheStatus;
         delete session.cache;
         delete session.subscriptions;
-        cache.close();
       }
-    }
-  };
-  try {
-    subscriptions = createSubscriptions({
-      cache,
-      targets,
-      account,
-      authorize: async (signal) => {
-        const channels = await listAccessibleChannels(session, signal);
-        cache.retainChannels(channels.keys());
-      },
-    });
+      cache.close();
+      const failed = results.find((result) => result.status === "rejected");
+      if (failed) throw failed.reason;
+    })());
+
+  close.activate = async () => {
+    if (closing) throw new Error("Cannot activate a closed event runtime");
+    if (stopListener) return;
+    // Validation and all SQL statement preparation finished while the old runtime was live.
+    // Shrinking retention and revoking removed callback destinations commit together.
+    applyStorePolicy(cache, subscriptions);
     session.cacheStatus = "connecting";
     session.cache = cache;
     session.subscriptions = subscriptions;
+    if (!config.guardrails.readOnly) subscriptions.start();
     timer = setInterval(() => {
       try {
         cache.prune();
+        subscriptions.prune();
       } catch {
         log("Message cache expiry cleanup delayed");
       }
     }, 60000);
     timer.unref();
-    stop = await startListener({
+    stopListener = startListener({
       session,
+      retentionMs: cache.retentionMs,
       checkpoint: cache.checkpoint,
       enqueue(record) {
         cache.apply(record);
@@ -80,9 +108,23 @@ export async function startEvents({ config, session }) {
       onStatus(state) {
         session.cacheStatus = state;
         if (state === "connected")
-          log("Mattermost message cache connected; 48-hour catch-up complete");
+          log(`Mattermost message cache connected; ${retentionHours}-hour catch-up complete`);
       },
     });
+  };
+
+  try {
+    subscriptions = createSubscriptions({
+      cache,
+      targets,
+      account,
+      deferred: true,
+      authorize: async (signal) => {
+        const channels = await listAccessibleChannels(session, signal);
+        cache.retainChannels(channels.keys());
+      },
+    });
+    if (!deferActivation) await close.activate();
     return close;
   } catch (error) {
     await close();
