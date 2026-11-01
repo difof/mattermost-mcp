@@ -73,11 +73,12 @@ function conditions({ direction, channelId, senderId, channelType, isMention, si
   return { where, args };
 }
 
-export function listMessages(db, options, cutoff) {
+export function listMessages(db, options, cutoff, delivering = false) {
   const { cursor, limit = 25 } = options;
   if (!Number.isInteger(limit) || limit < 1 || limit > 100)
     throw new Error("Message cache limit must be 1 to 100");
   const { where, args } = conditions(options, cutoff);
+  if (options.unreadOnly) where.push("readCount=0");
   if (cursor !== undefined) {
     where.push("(createdAt, postId) < (?, ?)");
     args.push(...readCursor(cursor));
@@ -95,6 +96,9 @@ export function listMessages(db, options, cutoff) {
       nextCursor = toCursor(messages.at(-1));
       break;
     }
+    // Size the exact response, including the post-delivery counter. Omitted
+    // rows (limit, byte budget, or cursor) never count as delivered.
+    if (delivering) row.readCount++;
     const msg = contentRow(row),
       bytes = Buffer.byteLength(JSON.stringify(msg)) + 1;
     if (messages.length && used + bytes > PAGE_BYTES) {
