@@ -19,6 +19,10 @@ An unknown tool name raises the JSON-RPC `InvalidParams` error (`-32602`). Inval
 guardrail refusals and Mattermost API failures return a tool result with `isError: true` and a
 message describing the failure.
 
+## Shared service: cached messages and timed subscriptions (4)
+
+With the SQLite cache enabled, use `list_cached_messages` for a quick pull or `subscribe_messages` for a time-limited callback. `list_message_subscriptions` and `unsubscribe_messages` manage existing registrations. See [filters, sample calls, and retention](shared-service.md#pull-or-subscribe).
+
 ## Full API (3)
 
 These three tools expose the pinned core API without adding hundreds of schemas to every MCP
@@ -198,5 +202,5 @@ capped at 1 MiB. Convenience upload, metadata and download requests reject HTTP 
   `send_dm` opens the conversation for the exact participant set you supply.
 - Upload a file with `upload_file`, then attach its returned ID with `post_message.file_ids`.
 
-The MCP `tools/list` response contains the 37 tool schemas. Endpoint schemas are returned through
+The MCP `tools/list` response contains the 37 core tool schemas and any enabled service tools. Endpoint schemas are returned through
 `api_describe`; the [coverage audit](api-coverage.md) defines the version and transport boundaries.
