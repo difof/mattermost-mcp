@@ -1,5 +1,12 @@
 # @bryanberger/mattermost-mcp
 
+## 0.10.0 (fork)
+
+- Fence inbox pruning and replay with channel membership versions; preserve read counts across authoritative edits. Continue live capture and retry failed channels and callbacks independently.
+- Add retryable inbox pulls (`request_id`), non-consuming `get_inbox_status`, exact `resolve_conversation`, and bounded directory paging. The send tools accept an optional pending-post retry hint.
+- Protect credentials and cache files from uploads, reject SDK redirects, harden OAuth and SSO login, verify pagination anchors and require explicit approval for administrative exports. Add operator limits for upstream responses and HTTP admission; isolated cancellation preserves the management path.
+- Replace the expensive mention parser with bounded passes and verify both generated API files against immutable upstream source in CI.
+
 ## 0.9.0 (fork)
 
 - Track how many inbox pulls returned each retained post. Pull only unread posts with `unread_only: true`; parallel agents share one counter without changing Mattermost read receipts.
