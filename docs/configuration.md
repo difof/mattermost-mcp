@@ -2,6 +2,17 @@
 
 [Back to README](../README.md) · [Tool reference](tools.md)
 
+## Service security budgets
+
+| Startup option             | Default | Behavior                                                                                                                                                                                                                                                                                                                                            |
+| -------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MM_MAX_RESPONSE_BYTES`    | 8 MiB   | Operator ceiling on decoded Mattermost responses, including convenience SDK calls; maximum 64 MiB. A tool's `max_bytes` cannot raise this limit.                                                                                                                                                                                                    |
+| `MM_HTTP_MAX_CONCURRENT`   | 8       | Ordinary simultaneous HTTP exchanges (1–32). Management has a separate two-slot admission budget. HTTP accepts individual MCP requests, not JSON-RPC batches.                                                                                                                                                                                       |
+| `MM_ALLOW_SENSITIVE_READS` | false   | Permit generic OAuth-app, webhook or command reads that can contain secrets. Keep disabled unless that access is intentional.                                                                                                                                                                                                                       |
+| `MM_CACHE_VERIFY_POSTS`    | false   | For deployments with per-post masking or dynamic plugins, verify each candidate via the account’s current single-post API view before inbox delivery or callback notification. A plugin that masks only list responses must also protect its single-post endpoint to enforce the same policy. An unavailable verification does not count as a read. |
+
+Client4 login and ordinary methods reject redirects. OAuth callback errors must belong to the active state, and browser SSO uses a private debugging pipe. Local uploads require existing, pinned directories; protected credentials, private cache state and hard-linked files are excluded. Retry waits are interruptible, capped at ten seconds, with a sixty-second budget for a retried read. Large bodies should be fetched in bounded pages or ranges.
+
 ## CLI
 
 Run `npm link` in the built checkout for the `mattermost-mcp` command, or replace it below with
