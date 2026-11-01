@@ -166,7 +166,18 @@ export function waitForCode(redirect, expectedState) {
   const host = target.hostname === "[::1]" ? "::1" : target.hostname;
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => {
-      const reqUrl = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
+      // Accept only origin-form callback paths, before parsing any OAuth fields.
+      let reqUrl;
+      try {
+        if (req.method !== "GET" || !req.url?.startsWith("/") || /^[/\\]{2}|\\/.test(req.url)) {
+          throw new Error("invalid request target");
+        }
+        reqUrl = new URL(req.url, target.origin);
+        if (reqUrl.origin !== target.origin) throw new Error("invalid request target");
+      } catch {
+        res.writeHead(400).end("Invalid callback request");
+        return;
+      }
       if (reqUrl.pathname !== target.pathname) {
         res.writeHead(404).end("not found");
         return;
@@ -183,10 +194,11 @@ export function waitForCode(redirect, expectedState) {
       const error = reqUrl.searchParams.get("error");
       const code = reqUrl.searchParams.get("code");
       const state = reqUrl.searchParams.get("state");
-      if (error)
-        return fail("Authorization failed.", new Error(`OAuth authorization error: ${error}`));
-      if (state !== expectedState)
-        return fail("State mismatch.", new Error("OAuth state mismatch (possible CSRF)"));
+      if (state !== expectedState || reqUrl.searchParams.getAll("state").length !== 1) {
+        res.writeHead(400).end("Invalid callback state");
+        return;
+      }
+      if (error) return fail("Authorization failed.", new Error("OAuth authorization denied"));
       if (!code)
         return fail("Missing code.", new Error("OAuth callback missing authorization code"));
       reply("Authorization complete.");
