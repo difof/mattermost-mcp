@@ -1,10 +1,9 @@
-// Only opaque identifiers leave the listener. A post body is never an instruction.
 const mattermostId = /^[a-z0-9]{26}$/;
 export const isMattermostId = (value) => typeof value === "string" && mattermostId.test(value);
 
 function hasPersonalMention(message, username) {
-  // Ignore code, link targets, URLs and email-like text. The live path additionally
-  // requires Mattermost's per-recipient mention ID (which can also mean @channel).
+  // Count an explicit personal handle, excluding code, link targets, URLs and email-like text.
+  if (!/[@＠]/.test(message)) return false;
   const prose = message
     .replace(/^ {0,3}`{3,}[^\n]*\n[\s\S]*?(?:^ {0,3}`{3,}[^\n]*$|(?![\s\S]))/gm, " ")
     .replace(/^ {0,3}~{3,}[^\n]*\n[\s\S]*?(?:^ {0,3}~{3,}[^\n]*$|(?![\s\S]))/gm, " ")
@@ -17,50 +16,56 @@ function hasPersonalMention(message, username) {
   ).test(prose);
 }
 
-export function selectPost(post, channelType, me, mentionIds) {
+export const allowedChannelTypes = new Set(["D", "G", "O", "P"]);
+
+// Keep only the fields needed for a cached message. In particular, props, embed previews,
+// file bodies, and private integration payloads never reach the store.
+export function selectPost(post, channelType, me, deleted = false) {
   if (
     !post ||
     !isMattermostId(post.id) ||
     !isMattermostId(post.channel_id) ||
-    !isMattermostId(post.user_id) ||
-    (post.root_id && !isMattermostId(post.root_id)) ||
     !Number.isSafeInteger(post.create_at) ||
     post.create_at <= 0 ||
-    post.delete_at ||
-    post.user_id === me.id ||
-    post.type?.startsWith("system_")
-  )
+    post.type === "burn_on_read" ||
+    (post.type != null && (typeof post.type !== "string" || post.type.startsWith("system_")))
+  ) {
     return null;
-  if (channelType !== "D") {
-    if (mentionIds === undefined) {
-      // REST does not retain the original at-post-time text of edited messages.
-      if (post.edit_at) return null;
-    } else if (!Array.isArray(mentionIds) || !mentionIds.includes(me.id)) return null;
-    if (
-      !["O", "P", "G"].includes(channelType) ||
-      !me.username ||
-      typeof post.message !== "string" ||
-      !hasPersonalMention(post.message, me.username)
-    )
-      return null;
   }
-  return {
-    kind: channelType === "D" ? "dm" : "mention",
+  const times = [post.update_at, post.edit_at, post.delete_at].filter(Number.isSafeInteger);
+  const base = {
     postId: post.id,
     channelId: post.channel_id,
-    rootId: post.root_id || post.id,
-    senderId: post.user_id,
     createdAt: post.create_at,
+    updatedAt: Math.max(post.create_at, ...times),
+  };
+  if (deleted || post.delete_at > 0) {
+    // Mattermost can publish post_deleted with the pre-deletion post object. Its edit
+    // timestamp is not the delete time; retain a current tombstone for this event.
+    if (deleted && !(post.delete_at > 0)) base.updatedAt = Math.max(base.updatedAt, Date.now());
+    return { ...base, deleted: true };
+  }
+  if (!isMattermostId(post.user_id) || (post.root_id && !isMattermostId(post.root_id))) return null;
+  const message = typeof post.message === "string" ? post.message : "";
+  return {
+    ...base,
+    senderId: post.user_id,
+    rootId: post.root_id || post.id,
+    channelType,
+    direction: post.user_id === me.id ? "outgoing" : "incoming",
+    message,
+    fileIds: Array.isArray(post.file_ids) ? [...new Set(post.file_ids.filter(isMattermostId))] : [],
+    isMention: Boolean(me.username && hasPersonalMention(message, me.username)),
   };
 }
 
-// These WebSocket attributes are JSON strings in Mattermost v11.
 export function selectPostedFrame(frame, me) {
-  if (frame.event !== "posted") return null;
+  if (!["posted", "post_edited", "post_deleted"].includes(frame.event)) return null;
   const data = frame.data ?? {};
   const post = typeof data.post === "string" ? JSON.parse(data.post) : data.post;
   if (!post || (frame.broadcast?.channel_id && frame.broadcast.channel_id !== post.channel_id))
     return null;
-  const ids = typeof data.mentions === "string" ? JSON.parse(data.mentions) : data.mentions;
-  return selectPost(post, data.channel_type, me, ids ?? []);
+  // Edit/delete frames need not include channel_type. The consumer resolves it against
+  // the authenticated membership catalog before applying the record.
+  return selectPost(post, data.channel_type, me, frame.event === "post_deleted");
 }
