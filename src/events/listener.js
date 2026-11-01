@@ -1,22 +1,24 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { openEventStream } from "./websocket.js";
 import { log } from "../log.js";
-import { isMattermostId } from "./filter.js";
-import { listAccessibleChannels, readEventJson } from "./api.js";
+import { selectPostedFrame } from "./filter.js";
 import { recoverPosts } from "./recovery.js";
 import { RETENTION_MS } from "./cache.js";
 
-async function consume({ session, cache, onStatus, signal, me }) {
-  const stream = openEventStream(session, me, signal);
-  let channels,
+async function consume({ session, cache, onStatus, signal }) {
+  const stream = openEventStream(session, signal, cache.invalidateDirectory);
+  let me,
+    channels,
+    joined,
     recovery,
     recovered = false;
   try {
     for await (const item of stream) {
       if (item.type === "connected") {
         onStatus("recovering");
-        channels = await listAccessibleChannels(session, stream.signal);
-        await cache.retainChannels(channels.keys());
+        ({ me, channels: joined } = await cache.refreshDirectory(stream.signal));
+        // Recovery can deny post content even when metadata membership remains.
+        channels = new Map(joined);
         // A timestamp-only incremental scan misses older posts edited/deleted offline.
         // Reconcile precisely the retained window; live events continue during pagination.
         recovery = recoverPosts({
@@ -37,15 +39,24 @@ async function consume({ session, cache, onStatus, signal, me }) {
         onStatus(recovered ? "connected" : "partial");
       } else if (item.type === "checkpoint") {
         if (recovered) await cache.checkpoint(item.time);
-      } else if (item.type === "membership") {
-        stream.abort();
-        if (isMattermostId(item.revoked)) await cache.purgeChannel(item.revoked);
-        break;
+      } else if (item.type === "directory") {
+        const next = await cache.refreshDirectory(stream.signal);
+        // A metadata change usually only renames a channel/account. If the
+        // membership set also changed, reconnect to recover newly visible history.
+        if (
+          joined.size !== next.channels.size ||
+          [...joined].some(([id, ch]) => ch.type !== next.channels.get(id)?.type)
+        ) {
+          stream.abort();
+          break;
+        }
+        me = next.me;
       } else {
-        const channel = channels?.get(item.event.channelId);
+        const event = selectPostedFrame(item.frame, me);
+        const channel = event && channels.get(event.channelId);
         if (channel) {
-          if (!item.event.deleted) item.event.channelType = channel.type;
-          await cache.enqueue(item.event, item.action);
+          if (!event.deleted) event.channelType = channel.type;
+          await cache.enqueue(event, item.frame.event);
         }
       }
     }
@@ -58,22 +69,24 @@ async function consume({ session, cache, onStatus, signal, me }) {
 
 export function startListener({
   session,
+  refreshDirectory,
+  invalidateDirectory,
   retentionMs = RETENTION_MS,
   checkpoint,
   enqueue,
   enqueueBatch,
-  retainChannels,
   purgeChannel,
   cachedIds,
   reconcileMissing,
   onStatus = () => {},
 }) {
   const cache = {
+    refreshDirectory,
+    invalidateDirectory,
     retentionMs,
     checkpoint,
     enqueue,
     enqueueBatch,
-    retainChannels,
     purgeChannel,
     cachedIds,
     reconcileMissing,
@@ -85,14 +98,9 @@ export function startListener({
     while (!signal.aborted) {
       try {
         onStatus("connecting");
-        const me = await readEventJson(session, session.client.getUserRoute("me"), signal);
-        if (!me.username || me.id !== session.userId)
-          throw new Error("Unexpected account on event connection");
-        signal.throwIfAborted();
         await consume({
           session,
           cache,
-          me,
           signal,
           onStatus: (state) => {
             if (state === "connected" || state === "partial") failures = 0;
