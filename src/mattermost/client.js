@@ -25,65 +25,59 @@ export function doClientFetch(client, url, options) {
   // Keep access to Client4's internal transport at the session boundary.
   return client.doFetch(url, options);
 }
-/**
- * Authenticate against Mattermost and return a ready session.
- * Verifies credentials with a `GET /users/me` smoke call (also our identity).
- * Throws (fails fast) on auth or connectivity errors.
- */
+// Bind both initial authentication and 401 recovery to the same credential state.
+function sessionAuthentication(client, { auth, url }, timeoutMs) {
+  if (auth.mode === "pat") return { authenticate: () => client.setToken(auth.token) };
+  if (auth.mode === "password") {
+    const login = () => client.login(auth.loginId, auth.password, auth.mfaToken ?? "");
+    return {
+      authenticate: login,
+      async recover() {
+        log("session token expired (401) — re-authenticating");
+        await login();
+        return true;
+      },
+    };
+  }
+
+  if (auth.mode !== "oauth2") throw new Error("Unsupported Mattermost authentication mode");
+  let tokens;
+  function applyTokens(next) {
+    tokens = next;
+    client.setToken(tokens.accessToken);
+  }
+  return {
+    async authenticate() {
+      applyTokens(await acquireOAuthToken(url, auth, timeoutMs));
+    },
+    async recover() {
+      if (!tokens?.refreshToken) return false;
+      log("access token expired (401) — refreshing");
+      applyTokens(await refreshOAuthToken(url, auth, tokens, timeoutMs));
+      return true;
+    },
+  };
+}
+
+// Concurrent 401s share one login/refresh. Rotating tokens must not be redeemed twice.
+function sharedRecovery(recover) {
+  if (!recover) return undefined;
+  let pending;
+  return () =>
+    (pending ??= recover().finally(() => {
+      pending = undefined;
+    }));
+}
+
+/** Authenticate and verify the account with GET /users/me before accepting requests. */
 export async function createSession(config, { verify = (client) => client.getMe() } = {}) {
   const { auth, url } = config;
   const resilience = config.resilience ?? DEFAULT_RESILIENCE;
   const client = buildClient(url, resilience.timeoutMs);
-  // oauth2 keeps mutable token state so a 401 can transparently refresh.
-  let oauthTokens = null;
-  async function authenticate() {
-    switch (auth.mode) {
-      case "pat":
-        // PAT → Bearer header on every request. No network call here.
-        client.setToken(auth.token);
-        return;
-      case "password":
-        // POST /users/login; login() captures the session token from the
-        // `Token` response header and calls setToken() internally.
-        await client.login(auth.loginId, auth.password, auth.mfaToken ?? "");
-        return;
-      case "oauth2": {
-        // Cache-first; runs interactive consent only when no usable token exists.
-        oauthTokens = await acquireOAuthToken(url, auth, resilience.timeoutMs);
-        client.setToken(oauthTokens.accessToken);
-        return;
-      }
-    }
-  }
-  // Recover from a 401 in-flight: re-login (password) or refresh (oauth2).
-  async function recover() {
-    if (auth.mode === "password") {
-      log("session token expired (401) — re-authenticating");
-      await client.login(auth.loginId, auth.password, auth.mfaToken ?? "");
-      return true;
-    }
-    if (auth.mode === "oauth2" && oauthTokens?.refreshToken) {
-      log("access token expired (401) — refreshing");
-      oauthTokens = await refreshOAuthToken(url, auth, oauthTokens, resilience.timeoutMs);
-      client.setToken(oauthTokens.accessToken);
-      return true;
-    }
-    return false;
-  }
-  // Concurrent requests can encounter the same expired token. Share one login
-  // or refresh so rotating refresh tokens are not redeemed more than once.
-  let recovery;
-  const recoverAuthentication = () => {
-    if (!recovery) {
-      recovery = recover().finally(() => {
-        recovery = undefined;
-      });
-    }
-    return recovery;
-  };
+  const { authenticate, recover } = sessionAuthentication(client, config, resilience.timeoutMs);
   // Cached OAuth access tokens can be revoked before their recorded expiry.
   // Apply the same recovery policy to startup verification and later requests.
-  applyRequestResilience(client, resilience, recoverAuthentication);
+  applyRequestResilience(client, resilience, sharedRecovery(recover));
   // Fail fast with an actionable message instead of a raw API error dump.
   let me;
   try {
