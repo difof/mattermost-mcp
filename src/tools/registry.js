@@ -87,7 +87,11 @@ export async function dispatchToolCall(tools, ctx, name, rawArgs) {
 /** Wire tools/list and tools/call onto a low-level MCP Server. */
 export function registerTools(server, tools, ctx) {
   server.setRequestHandler(ListToolsRequestSchema, () => buildToolList(tools));
-  server.setRequestHandler(CallToolRequestSchema, (req) =>
-    dispatchToolCall(tools, ctx, req.params.name, req.params.arguments),
-  );
+  server.setRequestHandler(CallToolRequestSchema, ({ params }) => {
+    // A routing hint for this one call, never an identity attached to the shared account.
+    const hint = params._meta?.["ai.opencode/sessionID"];
+    const callerSessionId =
+      typeof hint === "string" && /^ses_[A-Za-z0-9]{1,100}$/.test(hint) ? hint : undefined;
+    return dispatchToolCall(tools, { ...ctx, callerSessionId }, params.name, params.arguments);
+  });
 }
