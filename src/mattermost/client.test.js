@@ -210,7 +210,7 @@ describe("session HTTP request resilience", () => {
         { method: "get", signal: controller.signal },
         operation,
       ),
-    ).rejects.toThrow("cancelled");
+    ).rejects.toMatchObject({ name: "AbortError" });
     expect(operation).toHaveBeenCalledOnce();
   });
 });
