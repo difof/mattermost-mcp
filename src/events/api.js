@@ -1,3 +1,5 @@
+import { ResourceGuard } from "../resource-guardrails.js";
+import { isMattermostId, allowedChannelTypes } from "./filter.js";
 import { runClientRequest } from "../mattermost/resilience.js";
 import { readApiResponse } from "../mattermost/http-response.js";
 
@@ -24,4 +26,26 @@ export function readEventJson(session, url, signal) {
       signal.removeEventListener("abort", abort);
     }
   });
+}
+
+/** Current joined channels, including archived memberships when still visible to this account. */
+export async function listAccessibleChannels(session, signal = new AbortController().signal) {
+  const url = new URL(session.client.getUserRoute("me") + "/channels");
+  url.searchParams.set("include_deleted", "true");
+  const rows = await readEventJson(session, url, signal);
+  if (!Array.isArray(rows)) throw new Error("Invalid channel memberships");
+  const guard = new ResourceGuard(session),
+    channels = new Map();
+  for (const channel of rows) {
+    if (!isMattermostId(channel?.id) || !allowedChannelTypes.has(channel.type))
+      throw new Error("Invalid channel membership");
+    if (await guard.channelAllowed(channel.id, channel)) {
+      channels.set(channel.id, {
+        id: channel.id,
+        type: channel.type,
+        last_post_at: channel.last_post_at,
+      });
+    }
+  }
+  return channels;
 }
