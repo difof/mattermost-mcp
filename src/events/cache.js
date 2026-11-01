@@ -1,6 +1,7 @@
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync } from "node:fs";
 import { dirname } from "node:path";
-import { isMattermostId } from "./filter.js";
+import { listMessages, nextMatching } from "./cache-query.js";
+import { CLEAR, postWriter, validTime } from "./cache-posts.js";
 
 export const DEFAULT_RETENTION_HOURS = 48;
 export const RETENTION_MS = DEFAULT_RETENTION_HOURS * 3600000;
@@ -9,8 +10,6 @@ function retentionWindow(hours) {
     throw new Error("Cache retention must be an integer between 1 and 168 hours");
   return hours * 3600000;
 }
-const PAGE_BYTES = 128 * 1024;
-const validTime = (n) => Number.isSafeInteger(n) && n >= 0;
 
 /** SQLite opens by path; ensure the containing directory and the pre-created file are private. */
 function privateFile(file) {
@@ -36,110 +35,6 @@ function privateFile(file) {
   } finally {
     closeSync(fd);
   }
-}
-
-function readCursor(value) {
-  if (typeof value !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(value))
-    throw new Error("Invalid message cache cursor");
-  try {
-    const tuple = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
-    if (
-      Array.isArray(tuple) &&
-      tuple.length === 2 &&
-      validTime(tuple[0]) &&
-      isMattermostId(tuple[1])
-    )
-      return tuple;
-  } catch {
-    /* malformed input */
-  }
-  throw new Error("Invalid message cache cursor");
-}
-
-function toCursor({ createdAt, postId }) {
-  return Buffer.from(JSON.stringify([createdAt, postId])).toString("base64url");
-}
-
-function contentRow({ seq: _seq, ...row }) {
-  const msg = { ...row, isMention: !!row.isMention, fileIds: JSON.parse(row.fileIds) };
-  if (msg.fileIds.length > 100) {
-    msg.fileCount = msg.fileIds.length;
-    msg.fileIds = msg.fileIds.slice(0, 100);
-  }
-  // Account for JSON escaping (e.g. control characters), not just JS string length.
-  const size = () => Buffer.byteLength(JSON.stringify(msg));
-  if (size() > PAGE_BYTES - 256) {
-    const original = msg.message;
-    msg.messageTruncated = true;
-    msg.messageBytes = Buffer.byteLength(original);
-    let low = 0,
-      high = Math.min(original.length, PAGE_BYTES);
-    while (low < high) {
-      const middle = Math.ceil((low + high) / 2);
-      msg.message = original.slice(0, middle);
-      if (size() <= PAGE_BYTES - 256) low = middle;
-      else high = middle - 1;
-    }
-    if (low && /[\uD800-\uDBFF]/.test(original[low - 1])) low--;
-    msg.message = original.slice(0, low);
-  }
-  return msg;
-}
-
-function conditions({ direction, channelId, senderId, channelType, isMention, since }, cutoff) {
-  const where = ["message IS NOT NULL", "createdAt > ?"],
-    args = [cutoff];
-  for (const [field, value] of Object.entries({
-    direction,
-    channelId,
-    senderId,
-    channelType,
-    isMention: isMention === undefined ? undefined : Number(isMention),
-  })) {
-    if (value === undefined) continue;
-    where.push(field + " = ?");
-    args.push(value);
-  }
-  if (since !== undefined) {
-    if (!validTime(since)) throw new Error("Invalid message cache since timestamp");
-    where.push("createdAt >= ?");
-    args.push(since);
-  }
-  return { where, args };
-}
-
-function listMessages(db, options, cutoff) {
-  const { cursor, limit = 25 } = options;
-  if (!Number.isInteger(limit) || limit < 1 || limit > 100)
-    throw new Error("Message cache limit must be 1 to 100");
-  const { where, args } = conditions(options, cutoff);
-  if (cursor !== undefined) {
-    where.push("(createdAt, postId) < (?, ?)");
-    args.push(...readCursor(cursor));
-  }
-  const query = db.prepare(
-    "SELECT * FROM posts WHERE " +
-      where.join(" AND ") +
-      " ORDER BY createdAt DESC, postId DESC LIMIT ?",
-  );
-  const messages = [];
-  let used = 160,
-    nextCursor = null;
-  for (const row of query.iterate(...args, limit + 1)) {
-    if (messages.length === limit) {
-      nextCursor = toCursor(messages.at(-1));
-      break;
-    }
-    const msg = contentRow(row),
-      bytes = Buffer.byteLength(JSON.stringify(msg)) + 1;
-    if (messages.length && used + bytes > PAGE_BYTES) {
-      nextCursor = toCursor(messages.at(-1));
-      break;
-    }
-    messages.push(msg);
-    used += bytes;
-  }
-  return { messages, nextCursor };
 }
 
 /** One synchronous SQLite connection per service; scope the filename to server, account and access policy. */
@@ -181,85 +76,6 @@ function createSchema(db) {
     `);
 }
 
-const CLEAR =
-  "senderId=NULL, rootId=NULL, channelType=NULL, direction=NULL, isMention=NULL, message=NULL, fileIds=NULL";
-
-function postWriter(db, retentionMs) {
-  const prior = db.prepare(
-    "SELECT updatedAt, message IS NULL AS deleted FROM posts WHERE postId=?",
-  );
-  const insert = db.prepare(
-    "INSERT INTO posts(postId,channelId,createdAt,updatedAt,senderId,rootId,channelType,direction,isMention,message,fileIds) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-  );
-  const update =
-    db.prepare(`UPDATE posts SET updatedAt=?, senderId=?, rootId=?, channelType=?, direction=?, isMention=?, message=?, fileIds=?
-      WHERE postId=? AND channelId=? AND message IS NOT NULL AND updatedAt < ?`);
-
-  const tombstone =
-    db.prepare(`INSERT INTO posts(postId,channelId,createdAt,updatedAt) VALUES(?,?,?,?)
-      ON CONFLICT(postId) DO UPDATE SET updatedAt=max(posts.updatedAt,excluded.updatedAt), ${CLEAR}
-      WHERE posts.channelId=excluded.channelId`);
-  const clearReplies = db.prepare(
-    `UPDATE posts SET ${CLEAR},updatedAt=? WHERE channelId=? AND rootId=? AND message IS NOT NULL AND postId!=?`,
-  );
-  return function write(record, cutoff) {
-    const { postId, channelId, createdAt, updatedAt } = record;
-    if (
-      !isMattermostId(postId) ||
-      !isMattermostId(channelId) ||
-      !validTime(createdAt) ||
-      !validTime(updatedAt)
-    )
-      throw new Error("Invalid message cache record");
-    const stored = prior.get(postId);
-    if (record.deleted) {
-      // Mattermost emits just the root deletion when it also deletes every reply.
-      // A root can predate retention even though its replies were posted today.
-      const observedAt = cutoff + retentionMs;
-      clearReplies.run(observedAt, channelId, postId, postId);
-      if (!stored?.deleted) tombstone.run(postId, channelId, createdAt, observedAt);
-      return false;
-    }
-    if (createdAt <= cutoff || stored?.deleted || (stored && stored.updatedAt >= updatedAt))
-      return false;
-    const {
-      senderId,
-      rootId,
-      channelType,
-      direction,
-      message,
-      fileIds = [],
-      isMention = false,
-    } = record;
-    if (
-      !isMattermostId(senderId) ||
-      !isMattermostId(rootId) ||
-      !["D", "G", "O", "P"].includes(channelType) ||
-      !["incoming", "outgoing"].includes(direction) ||
-      typeof message !== "string" ||
-      !Array.isArray(fileIds) ||
-      !fileIds.every(isMattermostId)
-    )
-      throw new Error("Invalid message cache content");
-    if (rootId !== postId && prior.get(rootId)?.deleted) return false;
-    const values = [
-      senderId,
-      rootId,
-      channelType,
-      direction,
-      Number(!!isMention),
-      message,
-      JSON.stringify(fileIds),
-    ];
-    if (!stored) {
-      insert.run(postId, channelId, createdAt, updatedAt, ...values);
-      return true;
-    }
-    update.run(updatedAt, ...values, postId, channelId, updatedAt);
-    return false;
-  };
-}
-
 function transaction(db, run) {
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -298,21 +114,10 @@ function cacheOperations(db, now, retentionMs, deferPrune) {
   return {
     database: db,
     retentionMs,
+    transaction: (operation) => transaction(db, operation),
     highWatermark: () => watermark.get()?.seq ?? 0,
-    nextMatching(filters, afterSeq, sinceMs) {
-      if (!validTime(afterSeq) || !validTime(sinceMs))
-        throw new Error("Invalid subscription cursor");
-      const { where, args } = conditions(
-        { ...filters, since: Math.max(filters.since ?? 0, sinceMs) },
-        now() - retentionMs,
-      );
-      const row = db
-        .prepare(
-          "SELECT * FROM posts WHERE " + where.join(" AND ") + " AND seq > ? ORDER BY seq LIMIT 1",
-        )
-        .get(...args, afterSeq);
-      return row ? { seq: row.seq, record: contentRow(row) } : null;
-    },
+    nextMatching: (filters, afterSeq, sinceMs) =>
+      nextMatching(db, filters, afterSeq, sinceMs, now() - retentionMs),
     getCheckpoint: () => readTime.get()?.time ?? null,
     checkpoint(time) {
       if (!validTime(time)) throw new Error("Invalid cache checkpoint");
