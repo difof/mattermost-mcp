@@ -33,6 +33,11 @@ export function createSubscriptions({
     }, 15);
     timer.unref();
   }
+  function retry(row) {
+    if (stopSignal.signal.aborted) return;
+    leases.retry(row.id, now() + Math.min(60000, 1000 * 2 ** Math.min(6, row.failures)));
+    if (!row.failures) log("Message callback pending; retrying until its subscription expires");
+  }
   async function dispatch(row, item) {
     const lease = leases.get(row.id),
       currentTime = now();
@@ -55,10 +60,7 @@ export function createSubscriptions({
       leases.advance(row.id, item.seq);
       dirty = true;
     } catch {
-      if (!control.signal.aborted && !stopSignal.signal.aborted) {
-        leases.retry(row.id, now() + Math.min(60000, 1000 * 2 ** Math.min(6, row.failures)));
-        if (!row.failures) log("Message callback pending; retrying until its subscription expires");
-      }
+      if (!control.signal.aborted) retry(row);
     } finally {
       flights.delete(row.id);
     }
@@ -75,10 +77,18 @@ export function createSubscriptions({
     }
     if (!pending.length) return;
     // Check read permission only for channels about to be disclosed.
-    const allowed = await authorize(
-      pending.map(({ item }) => item.record.channelId),
-      stopSignal.signal,
-    );
+    let decision;
+    try {
+      decision = await authorize(
+        pending.map(({ item }) => item.record.channelId),
+        stopSignal.signal,
+        pending.map(({ item }) => item.record),
+      );
+    } catch {
+      // No verified membership snapshot: retry without advancing any lease.
+      for (const { row } of pending) retry(row);
+      return;
+    }
     let i = 0;
     await Promise.all(
       Array.from({ length: Math.min(pending.length, 4) }, async () => {
@@ -86,8 +96,11 @@ export function createSubscriptions({
           const { row, item } = pending[i++];
           const fresh = cache.nextMatching(JSON.parse(row.filters), row.cursor, row.started);
           if (!fresh) leases.advance(row.id, hi);
-          else if (fresh.seq === item.seq && allowed(fresh.record.channelId))
-            await dispatch(row, fresh);
+          else if (fresh.seq === item.seq) {
+            const allowed = decision(fresh.record.channelId, fresh.record);
+            if (allowed === true) await dispatch(row, fresh);
+            else if (allowed === undefined) retry(row);
+          }
           // A changed candidate needs its own authorization on the next tick.
         }
       }),
