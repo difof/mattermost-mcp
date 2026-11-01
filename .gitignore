@@ -2,6 +2,15 @@ node_modules/
 dist/
 *.log
 .env
-.env.local
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+.pats/
+service.env
+http-token
+admin-token
 .DS_Store
 coverage/
