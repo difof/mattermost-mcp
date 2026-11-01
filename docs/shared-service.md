@@ -12,11 +12,29 @@ server-side upload roots: use separate services for distinct trust boundaries.
 2. Generate a **separate** HTTP bearer with a cryptographic random generator (for example
    `openssl rand -hex 32` written directly to a private file with `umask 077`). Set
    `MM_HTTP_TOKEN_FILE` to its absolute path. Alternatively set `MM_HTTP_TOKEN`; never both.
-3. Run one supervised instance. The [systemd user unit](../examples/mattermost-mcp.service)
-   assumes a launcher at `~/.local/bin/mattermost-mcp`. Adapt its absolute executable to the
-   local install; put settings in `~/.config/mattermost-mcp/service.env` (0600).
-   Install the unit in `~/.config/systemd/user/` and run `systemctl --user daemon-reload`,
-   then `systemctl --user enable --now mattermost-mcp.service`.
+3. On Linux, put service settings in `$XDG_CONFIG_HOME/mattermost-mcp/service.env`
+   (default `~/.config/mattermost-mcp/service.env`, mode 0600). From the built checkout:
+
+   ```bash
+   node scripts/install-service.mjs --print
+   node scripts/install-service.mjs
+   systemctl --user daemon-reload
+   systemctl --user enable --now mattermost-mcp.service
+   ```
+
+The [installer](../scripts/install-service.mjs) renders the [unit template](../examples/mattermost-mcp.service.in)
+using the current Node executable and this checkout's built entry. The resulting machine-specific
+paths live only in the installed unit, under `$XDG_CONFIG_HOME/systemd/user/`. Keep the checkout
+in a stable location. The installer never reads credential values, changes the environment file
+or controls the running service.
+
+If an existing executable wrapper supplies credentials, pass `--launcher /absolute/path/to/wrapper`;
+it receives the single argument `serve`. Alternatively use `--node PATH --entry PATH`.
+Use `--env-file PATH` to choose a different private file, or `--no-env-file` when the launcher
+already supplies **all** required variables. Preview with the same flags plus `--print`.
+A matching unit is left alone. To update a differing regular unit, review the preview,
+rerun with `--replace`, then run `daemon-reload`. Restart an already running unit explicitly
+when its launch command or environment changes.
 
 Configure OpenCode v2's existing server name in place, leaving its Code Mode setting unchanged:
 
@@ -44,11 +62,11 @@ To inspect and change the running service, configure the separate [admin connect
 
 ## Rolling message cache
 
-Set `MM_EVENTS_ENABLED=true` in the shared service to keep a local SQLite cache (Node.js **22.13+** with `node:sqlite`; the core MCP still supports Node 20). No OpenCode session, callback credential, or model is needed. The service opens an outbound Mattermost WebSocket as the configured account. The first connection and subsequent reconnects reconcile accessible history over the configured retention window (default 48 hours).
+Set `MM_EVENTS_ENABLED=true` in the shared service to keep a local SQLite cache (Node.js **22.13+** with `node:sqlite`; the core MCP still supports Node 20). No OpenCode session, callback credential, or model is needed. The service opens an outbound Mattermost WebSocket as the configured account. After a shutdown or lost connection, the next connection pages retained Mattermost history across joined, permitted channels for the full configured retention window (48 hours by default). This recovers missed incoming and sent posts, reconciles edits, and removes locally cached posts that were deleted upstream. Use `syncState` on cache pulls to check progress. `recovering` means replay is still running. `partial` means at least 200 posts in one channel shared a creation millisecond and Mattermost could not provide a stable cursor through them. The service makes a best-effort pass, continues live events and other channels, and retries the window on a later reconnect. Do not treat an absent row as proof of absence while partial: fetch by exact post ID if known. `connected` means the replay completed. Posts outside the window, deleted before they could be fetched, or no longer accessible cannot be recovered.
 
 The cache contains text and identifiers from joined DMs, group DMs, private and public channels, including messages the account sent from other clients. It applies edits and deletes, omits system and burn-on-read posts, and does not copy file contents, embed previews or integration properties. Incoming means authored by someone else; outgoing means authored by this account. A mention is an explicit personal username in the message, not a broadcast or keyword notification.
 
-Messages expire based on their **original creation time**, even if subsequently edited. Set the startup default with `MM_RETENTION_HOURS` (1–168, default 48), or change `retention_hours` live through the [admin tools](admin-settings.md#list-set-reload). Reads exclude expired rows immediately. Expired content is removed at startup, on reads/writes and every minute while caching is enabled. During downtime physical cleanup resumes at next start. Files are scoped by server, account and allowlists under `$XDG_STATE_HOME/mattermost-mcp/cache/` (default `~/.local/state/mattermost-mcp/cache/`); override the parent with `MM_EVENTS_STATE_DIR`. The DB is owner-only and contains private plaintext: retire obsolete scope files when changing accounts or resource allowlists. Cache pulls and callbacks recheck current channel access and fail closed if it cannot be verified.
+Messages expire based on their **original creation time**, even if subsequently edited. Set the startup default with `MM_RETENTION_HOURS` (1–168, default 48), or change `retention_hours` live through the [admin tools](admin-settings.md#list-set-reload). Reads exclude expired rows immediately. Expired content is removed at startup, on reads/writes and every minute while caching is enabled. During downtime physical cleanup resumes at next start. Files are scoped by server, account and allowlists under `$XDG_STATE_HOME/mattermost-mcp/cache/` (default `~/.local/state/mattermost-mcp/cache/`); override the parent with `MM_EVENTS_STATE_DIR`. The DB is owner-only and contains private plaintext: retire obsolete scope files when changing accounts or resource allowlists. Before returning a page or sending callback metadata, the service rechecks membership and verifies permission to read posts in the candidate channels. A definitive denial purges that channel locally. A temporary verification failure returns no page or callback and retains the rows for a later retry.
 
 ## Pull or subscribe
 
