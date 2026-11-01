@@ -40,11 +40,16 @@ export function toCacheFilters({
 export const cachedMessagesTool = {
   name: "list_cached_messages",
   title: "List recently cached messages",
+  localWrite: true,
   description:
-    "Read the local message cache within its configured retention window (default 48 hours), newest first. All supplied filters must match. For DMs from one person, use channel_type D and sender_id; for channel mentions, use is_mention and channel_id. Set direction outgoing for messages sent by this account. Channel membership, allowlists and permission to read posts are checked before each page. Continue with nextCursor and the same filters.",
+    "Pull retained messages, newest first. Every returned post increments its local readCount (first pull: 1), shared by all agents. No Mattermost read receipts. Use unread_only for posts not yet pulled. Combine filters, e.g. channel_type D and sender_id for one person's DMs. Membership and content access are verified. Continue with nextCursor and the same filters.",
   inputSchema: z
     .object({
       ...cacheFilterShape,
+      unread_only: z
+        .boolean()
+        .optional()
+        .describe("Select only posts with readCount zero before this pull."),
       since: z
         .number()
         .int()
@@ -70,16 +75,20 @@ export const cachedMessagesTool = {
       if (!access.allows(args.channel_id))
         throw new Error("Channel is not an accessible joined channel");
     }
-    const filters = { ...toCacheFilters(args), cursor: args.cursor, limit: args.limit };
+    const filters = {
+      ...toCacheFilters(args),
+      unreadOnly: args.unread_only,
+      cursor: args.cursor,
+      limit: args.limit,
+    };
     // A purge or a live post during a check can move unverified channels onto the
     // page. Only return a freshly read page (including its cursor) that passed.
     for (let checks = 0; ; checks++) {
-      const page = cache.list(filters);
-      const ids = page.messages.map((row) => row.channelId);
-      if (ids.every(access.allows)) return { ...page, syncState: session.cacheStatus };
+      const { page, unverified } = cache.pullPage(filters, access.allows);
+      if (page) return { ...page, syncState: session.cacheStatus };
       if (checks === 3)
         throw new Error("The cache page changed during access checks; retry this pull");
-      await access.check(ids);
+      await access.check(unverified);
     }
   },
 };
