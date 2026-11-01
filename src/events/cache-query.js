@@ -1,7 +1,7 @@
 import { isMattermostId } from "./filter.js";
 import { validTime } from "./cache-posts.js";
 
-const PAGE_BYTES = 128 * 1024;
+export const PAGE_BYTES = 128 * 1024;
 
 function readCursor(value) {
   if (typeof value !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(value))
@@ -25,24 +25,39 @@ function toCursor({ createdAt, postId }) {
   return Buffer.from(JSON.stringify([createdAt, postId])).toString("base64url");
 }
 
-function contentRow({ seq: _seq, ...row }) {
+export function contentRow(
+  { seq: _seq, verifiedView: _verifiedView, ...row },
+  maxBytes = PAGE_BYTES - 256,
+) {
   const msg = { ...row, isMention: !!row.isMention, fileIds: JSON.parse(row.fileIds) };
   if (msg.fileIds.length > 100) {
     msg.fileCount = msg.fileIds.length;
     msg.fileIds = msg.fileIds.slice(0, 100);
   }
+  return fitMessage(msg, maxBytes);
+}
+
+export function fitMessage(msg, maxBytes) {
   // Account for JSON escaping (e.g. control characters), not just JS string length.
   const size = () => Buffer.byteLength(JSON.stringify(msg));
-  if (size() > PAGE_BYTES - 256) {
+  if (size() > maxBytes) {
+    // Edits may add attachments after an idempotent pull. Keep the replay bounded.
+    while (
+      msg.fileIds.length &&
+      Buffer.byteLength(JSON.stringify({ ...msg, message: "" })) > maxBytes - 96
+    ) {
+      msg.fileCount ??= msg.fileIds.length;
+      msg.fileIds.pop();
+    }
     const original = msg.message;
     msg.messageTruncated = true;
-    msg.messageBytes = Buffer.byteLength(original);
+    msg.messageBytes ??= Buffer.byteLength(original);
     let low = 0,
       high = Math.min(original.length, PAGE_BYTES);
     while (low < high) {
       const middle = Math.ceil((low + high) / 2);
       msg.message = original.slice(0, middle);
-      if (size() <= PAGE_BYTES - 256) low = middle;
+      if (size() <= maxBytes) low = middle;
       else high = middle - 1;
     }
     if (low && /[\uD800-\uDBFF]/.test(original[low - 1])) low--;
@@ -79,6 +94,10 @@ export function listMessages(db, options, cutoff, delivering = false) {
     throw new Error("Message cache limit must be 1 to 100");
   const { where, args } = conditions(options, cutoff);
   if (options.unreadOnly) where.push("readCount=0");
+  if (options.excludedChannels?.size) {
+    where.push("channelId NOT IN (SELECT value FROM json_each(?))");
+    args.push(JSON.stringify([...options.excludedChannels]));
+  }
   if (cursor !== undefined) {
     where.push("(createdAt, postId) < (?, ?)");
     args.push(...readCursor(cursor));
