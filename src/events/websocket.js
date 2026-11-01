@@ -1,6 +1,6 @@
 import { EventEmitter, on } from "node:events";
 import WebSocket from "ws";
-import { selectPostedFrame } from "./filter.js";
+import { isMattermostId } from "./filter.js";
 
 const heartbeatMs = 30_000;
 const maxQueuedFrames = 512;
@@ -19,27 +19,43 @@ function openSocket(session) {
 }
 
 const membershipEvents = new Set([
+  "channel_created",
   "direct_added",
   "group_added",
   "leave_team",
   "added_to_team",
+]);
+
+// These may reach an entire team, including users who never joined the channel.
+const metadataEvents = new Set([
+  "channel_updated",
   "channel_converted",
   "channel_deleted",
   "channel_restored",
+  "delete_team",
+  "restore_team",
 ]);
 
-function frameItem(frame, me) {
-  // Removal can be sent to the user without a broadcast channel.
-  const affectsMe = frame.data?.user_id === me.id || frame.broadcast?.user_id === me.id;
-  if (frame.event === "user_removed" && affectsMe)
-    return { type: "membership", revoked: frame.data?.channel_id || frame.broadcast?.channel_id };
+function frameItem(frame, userId) {
+  // v11 broadcasts some events to a channel, and sends a second copy to the
+  // affected user. A frame only invalidates our REST snapshot; it cannot grant access.
+  const affectsMe = frame.data?.user_id === userId || frame.broadcast?.user_id === userId;
+  if (frame.event === "user_removed" && affectsMe) {
+    const id = frame.data?.channel_id || frame.broadcast?.channel_id;
+    return { type: "membership", revoked: isMattermostId(id) ? id : undefined };
+  }
   if ((frame.event === "user_added" && affectsMe) || membershipEvents.has(frame.event))
     return { type: "membership" };
-  const event = selectPostedFrame(frame, me);
-  return event ? { type: "post", event, action: frame.event } : null;
+  if (
+    metadataEvents.has(frame.event) ||
+    (frame.event === "user_updated" && (affectsMe || frame.data?.user?.id === userId))
+  )
+    return { type: "directory" };
+  if (["posted", "post_edited", "post_deleted"].includes(frame.event))
+    return { type: "post", frame };
+  return null;
 }
-
-function receive(socket, me, push, fail) {
+function receive(socket, userId, push, fail, invalidate) {
   let nextSequence,
     hello = false;
   let pingTime = 0,
@@ -74,7 +90,15 @@ function receive(socket, me, push, fail) {
         push({ type: "connected", time: Date.now() });
       } else {
         if (!hello) return fail();
-        const item = frameItem(frame, me);
+        const item = frameItem(frame, userId);
+        if (item?.type === "membership") {
+          // Stop any in-flight history replay before purging. Queued post frames
+          // from the old membership must not reinsert removed content.
+          fail();
+          invalidate(item.revoked);
+          return;
+        }
+        if (item?.type === "directory") invalidate();
         if (item) push(item);
       }
     } catch {
@@ -84,7 +108,7 @@ function receive(socket, me, push, fail) {
   return () => clearInterval(ping);
 }
 
-export function openEventStream(session, me, signal) {
+export function openEventStream(session, signal, invalidate) {
   signal.throwIfAborted();
   const socket = openSocket(session);
   const queue = new EventEmitter();
@@ -94,9 +118,14 @@ export function openEventStream(session, me, signal) {
   const stream = on(queue, "item", { signal: disconnected.signal });
   socket.on("error", abort);
   socket.on("close", abort);
-  let queued = 0;
+  let queued = 0,
+    directoryQueued = false;
   const push = (item) => {
     if (disconnected.signal.aborted) return;
+    if (item.type === "directory") {
+      if (directoryQueued) return;
+      directoryQueued = true;
+    }
     if (++queued > maxQueuedFrames) {
       abort();
       return;
@@ -107,7 +136,7 @@ export function openEventStream(session, me, signal) {
     if (queued === maxQueuedFrames / 2) socket.pause();
     queue.emit("item", item);
   };
-  const clearHeartbeat = receive(socket, me, push, abort);
+  const clearHeartbeat = receive(socket, session.userId, push, abort, invalidate);
   return {
     signal: disconnected.signal,
     abort,
@@ -115,6 +144,7 @@ export function openEventStream(session, me, signal) {
     async *[Symbol.asyncIterator]() {
       for await (const [item] of stream) {
         --queued;
+        if (item.type === "directory") directoryQueued = false;
         if (queued <= maxQueuedFrames / 4 && socket.isPaused) socket.resume();
         disconnected.signal.throwIfAborted();
         yield item;
