@@ -138,7 +138,7 @@ async function consume({ session, cache, onStatus, signal, me }) {
           session,
           channels,
           me,
-          since: item.time - RETENTION_MS,
+          since: item.time - cache.retentionMs,
           until: item.time,
           cache,
           signal: disconnected.signal,
@@ -172,8 +172,9 @@ async function consume({ session, cache, onStatus, signal, me }) {
   if (!signal.aborted) throw new Error("Reconnect for membership change");
 }
 
-export async function startListener({
+export function startListener({
   session,
+  retentionMs = RETENTION_MS,
   checkpoint,
   enqueue,
   enqueueBatch,
@@ -184,6 +185,7 @@ export async function startListener({
   onStatus = () => {},
 }) {
   const cache = {
+    retentionMs,
     checkpoint,
     enqueue,
     enqueueBatch,
