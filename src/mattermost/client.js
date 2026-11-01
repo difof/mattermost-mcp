@@ -6,10 +6,11 @@ import { formatMattermostError } from "./errors.js";
 import { applyRequestTimeout, applyRequestResilience } from "./resilience.js";
 import { DEFAULT_RESILIENCE } from "../config.js";
 import { log } from "../log.js";
+import { installSdkTransport } from "./sdk-transport.js";
 import { VERSION } from "../version.js";
 const USER_AGENT = `mattermost-mcp/${VERSION}`;
 /** Construct a headless Client4 (Bearer-only, cookies off, per-request timeout). */
-export function buildClient(url, timeoutMs) {
+export function buildClient(url, timeoutMs, maxResponseBytes) {
   const client = new mattermost.Client4();
   client.setUrl(url);
   client.setUserAgent(USER_AGENT);
@@ -18,6 +19,7 @@ export function buildClient(url, timeoutMs) {
   client.setIncludeCookies(false);
   // Abort any request that exceeds the configured timeout.
   applyRequestTimeout(client, timeoutMs);
+  installSdkTransport(client, maxResponseBytes);
   return client;
 }
 /** Use the SDK transport for verified API routes without a named Client4 method. */
@@ -73,7 +75,7 @@ function sharedRecovery(recover) {
 export async function createSession(config, { verify = (client) => client.getMe() } = {}) {
   const { auth, url } = config;
   const resilience = config.resilience ?? DEFAULT_RESILIENCE;
-  const client = buildClient(url, resilience.timeoutMs);
+  const client = buildClient(url, resilience.timeoutMs, config.maxResponseBytes);
   const { authenticate, recover } = sessionAuthentication(client, config, resilience.timeoutMs);
   // Cached OAuth access tokens can be revoked before their recorded expiry.
   // Apply the same recovery policy to startup verification and later requests.
