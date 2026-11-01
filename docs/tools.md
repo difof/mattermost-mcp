@@ -7,6 +7,16 @@ Legend: ⚠️ = write (blocked by `MM_READ_ONLY=true`) · 💥 = destructive (r
 
 For service management use the [separate admin catalog](admin-settings.md): `list_settings`, `set_settings`, `reload_settings`. They are not ordinary Mattermost tools.
 
+## Inbox and target resolution
+
+With the shared cache enabled, `get_inbox_status({})` reports health without reading a message. Add `include_counts:true` for authorized aggregates when available. `resolve_conversation` takes exactly one `username`, `channel_id`, or `channel_name` (with optional `team_id` for names). It can return `resolved`, `not_found`, or `ambiguous`. It never opens a conversation or sends a message. Ask for clarification on ambiguity.
+
+`list_cached_messages` accepts an optional UUID `request_id`. Use a new UUID for each logical page and reuse it only for a retry with the same arguments and caller context. See [receipt and retention semantics](shared-service.md#pull-or-subscribe).
+
+`get_unreads({team_id,detailed:true})` returns `{channels, unavailableCount, partial}` with at most four native unread lookups active. Without `detailed`, fully successful calls keep the original array response. If a channel fails, the tool returns the partial object rather than discarding healthy results or leaking an unverified channel ID.
+
+The send tools accept an optional UUID `request_id` for Mattermost's pending-post deduplication. The key is scoped to account and channel; the same intent must reuse identical content. Pinned v11 caches pending IDs for approximately 30 seconds, subject to the server and its cache. This is not durable exactly-once delivery. Reconcile an uncertain send against channel history before retrying.
+
 ## Arguments and errors
 
 Use argument names exactly as advertised by `tools/list`. Extra argument names are rejected;
