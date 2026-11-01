@@ -1,14 +1,13 @@
 import { EventEmitter, on } from "node:events";
 import { setTimeout as sleep } from "node:timers/promises";
 import WebSocket from "ws";
-import { ResourceGuard } from "../resource-guardrails.js";
 import { log } from "../log.js";
-import { selectPostedFrame } from "./filter.js";
-import { readEventJson } from "./api.js";
+import { isMattermostId, selectPostedFrame } from "./filter.js";
+import { listAccessibleChannels, readEventJson } from "./api.js";
 import { recoverPosts } from "./recovery.js";
+import { RETENTION_MS } from "./cache.js";
 
 const heartbeatMs = 30_000;
-const overlapMs = 60_000;
 const maxQueuedFrames = 512;
 
 // Authenticate the WebSocket upgrade, not its URL. Never forward the credential to redirects.
@@ -59,8 +58,36 @@ function receive(socket, me, push, fail) {
         push({ type: "connected", time: Date.now() });
       } else {
         if (!hello) return fail();
+        // Losing a channel is sent directly to the removed user, without broadcast.channel_id.
+        const recipient = frame.broadcast?.user_id;
+        if (
+          frame.event === "user_removed" &&
+          (frame.data?.user_id === me.id || recipient === me.id)
+        ) {
+          push({
+            type: "membership",
+            revoked: frame.data?.channel_id || frame.broadcast?.channel_id,
+          });
+          return;
+        }
+        if (
+          (frame.event === "user_added" &&
+            (frame.data?.user_id === me.id || recipient === me.id)) ||
+          [
+            "direct_added",
+            "group_added",
+            "leave_team",
+            "added_to_team",
+            "channel_converted",
+            "channel_deleted",
+            "channel_restored",
+          ].includes(frame.event)
+        ) {
+          push({ type: "membership" });
+          return;
+        }
         const event = selectPostedFrame(frame, me);
-        if (event) push({ type: "post", event });
+        if (event) push({ type: "post", event, action: frame.event });
       }
     } catch {
       fail();
@@ -69,7 +96,7 @@ function receive(socket, me, push, fail) {
   return () => clearInterval(ping);
 }
 
-async function consume({ session, getCheckpoint, checkpoint, enqueue, onStatus, signal, me }) {
+async function consume({ session, cache, onStatus, signal, me }) {
   const queue = new EventEmitter();
   const disconnected = new AbortController();
   const abort = () => disconnected.abort();
@@ -86,37 +113,52 @@ async function consume({ session, getCheckpoint, checkpoint, enqueue, onStatus, 
       abort();
       return;
     }
+    // Only the membership lookup/short DB operations block this consumer. Large history
+    // scans run alongside it; pause the socket at high water rather than restarting
+    // reconciliation over and over on a busy deployment.
+    if (queued === maxQueuedFrames / 2) socket.pause();
     queue.emit("item", item);
   };
   const clearHeartbeat = receive(socket, me, push, abort);
-  // A checkpoint is a conservative lower bound. Reconnect always reconciles through
-  // hello, including after a process crash; duplicate arrivals collapse in the outbox.
-  const advance = async (time) => {
-    const safe = time - overlapMs;
-    if (safe > (await getCheckpoint())) await checkpoint(safe);
-  };
+  let channels,
+    recovery,
+    recovered = false;
   try {
     for await (const [item] of stream) {
       --queued;
+      if (queued <= maxQueuedFrames / 4 && socket.isPaused) socket.resume();
       disconnected.signal.throwIfAborted();
       if (item.type === "connected") {
         onStatus("recovering");
-        await recoverPosts({
+        channels = await listAccessibleChannels(session, disconnected.signal);
+        await cache.retainChannels(channels.keys());
+        // A timestamp-only incremental scan misses older posts edited/deleted offline.
+        // Reconcile precisely the retained window; live events continue during pagination.
+        recovery = recoverPosts({
           session,
+          channels,
           me,
-          since: await getCheckpoint(),
+          since: item.time - RETENTION_MS,
           until: item.time,
-          enqueue,
+          cache,
           signal: disconnected.signal,
-        });
-        await advance(item.time);
+        }).then(() => push({ type: "ready", time: item.time }), abort);
+      } else if (item.type === "ready") {
+        recovered = true;
+        await cache.checkpoint(item.time);
         onStatus("connected");
       } else if (item.type === "checkpoint") {
-        // Pongs are ordered on this connection. Prior frames reached the durable
-        // outbox before this marker, even if a history reconciliation was slow.
-        await advance(item.time);
-      } else if (await new ResourceGuard(session).channelAllowed(item.event.channelId)) {
-        await enqueue(item.event);
+        if (recovered) await cache.checkpoint(item.time);
+      } else if (item.type === "membership") {
+        abort();
+        if (isMattermostId(item.revoked)) await cache.purgeChannel(item.revoked);
+        break;
+      } else {
+        const channel = channels?.get(item.event.channelId);
+        if (channel) {
+          if (!item.event.deleted) item.event.channelType = channel.type;
+          await cache.enqueue(item.event, item.action);
+        }
       }
     }
   } finally {
@@ -124,25 +166,32 @@ async function consume({ session, getCheckpoint, checkpoint, enqueue, onStatus, 
     abort();
     socket.terminate();
     await stream.return();
+    await recovery;
     signal.removeEventListener("abort", abort);
   }
+  if (!signal.aborted) throw new Error("Reconnect for membership change");
 }
 
 export async function startListener({
   session,
-  getCheckpoint,
   checkpoint,
   enqueue,
+  enqueueBatch,
+  retainChannels,
+  purgeChannel,
+  cachedIds,
+  reconcileMissing,
   onStatus = () => {},
 }) {
-  // First installation starts now; never generate notifications from pre-install history.
-  let baseline = await getCheckpoint();
-  if (baseline == null) {
-    baseline = Date.now();
-    await checkpoint(baseline);
-  }
-  if (!Number.isSafeInteger(baseline) || baseline <= 0)
-    throw new Error("Invalid Mattermost event checkpoint");
+  const cache = {
+    checkpoint,
+    enqueue,
+    enqueueBatch,
+    retainChannels,
+    purgeChannel,
+    cachedIds,
+    reconcileMissing,
+  };
   const controller = new AbortController();
   const { signal } = controller;
   const run = async () => {
@@ -156,9 +205,7 @@ export async function startListener({
         signal.throwIfAborted();
         await consume({
           session,
-          getCheckpoint,
-          checkpoint,
-          enqueue,
+          cache,
           me,
           signal,
           onStatus: (state) => {
@@ -170,7 +217,7 @@ export async function startListener({
         if (signal.aborted) break;
         onStatus("reconnecting");
         const delay = Math.min(60_000, 1_000 * 2 ** Math.min(failures++, 6));
-        log("Mattermost event connection interrupted; retaining checkpoint and retrying");
+        log("Mattermost event connection interrupted; reconnecting and reconciling cache");
         await sleep(delay + Math.random() * delay * 0.2, undefined, { signal }).catch(() => {});
       }
     }
