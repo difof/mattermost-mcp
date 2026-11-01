@@ -1,29 +1,9 @@
 import { constants } from "node:fs";
 import { open, realpath, stat } from "node:fs/promises";
-import { basename, isAbsolute, relative, sep } from "node:path";
+import { basename, isAbsolute } from "node:path";
 import { DEFAULT_MAX_UPLOAD_BYTES } from "../config.js";
+import { protectUploadRoots } from "./upload-access.js";
 import { decodeBase64 } from "./binary.js";
-
-function within(root, path) {
-  const suffix = relative(root, path);
-  return suffix !== ".." && !suffix.startsWith(`..${sep}`) && !isAbsolute(suffix);
-}
-
-async function allowedPath(path, roots) {
-  const directories = await Promise.all(
-    roots.map(async (root) => {
-      const directory = await realpath(root);
-      if (!(await stat(directory)).isDirectory())
-        throw new Error("MM_UPLOAD_ROOTS entries must be directories");
-      return directory;
-    }),
-  );
-  const resolved = await realpath(path);
-  if (!directories.some((directory) => within(directory, resolved))) {
-    throw new Error("file_path is outside MM_UPLOAD_ROOTS (including resolved symlinks)");
-  }
-  return resolved;
-}
 
 async function inspectOpenedFile(file, path, maxBytes) {
   const before = await file.stat({ bigint: true });
@@ -60,13 +40,15 @@ async function readSnapshot(file, before) {
   return bytes;
 }
 
-async function readLocalFile(path, roots, maxBytes) {
+async function readLocalFile(path, roots, maxBytes, access) {
   if (!roots.length) throw new Error("local uploads are disabled; configure MM_UPLOAD_ROOTS");
   if (!isAbsolute(path) || path.includes("\0")) {
     throw new Error("file_path must be an absolute local path without shell expansion");
   }
   try {
-    const resolved = await allowedPath(path, roots);
+    const policy = access ?? protectUploadRoots(roots);
+    const resolved = await realpath(path);
+    policy.checkPath(resolved);
     // Nonblocking open avoids a FIFO race; no-follow rejects a swapped final symlink.
     const file = await open(
       resolved,
@@ -74,7 +56,11 @@ async function readLocalFile(path, roots, maxBytes) {
     );
     try {
       const before = await inspectOpenedFile(file, resolved, maxBytes);
-      return await readSnapshot(file, before);
+      policy.checkFile(before);
+      const bytes = await readSnapshot(file, before);
+      policy.checkPath(resolved);
+      policy.checkFile(await file.stat({ bigint: true }));
+      return bytes;
     } finally {
       await file.close();
     }
@@ -95,7 +81,7 @@ export function createUploadReader(config = {}) {
     }
     let bytes;
     if (file_path !== undefined) {
-      bytes = await readLocalFile(file_path, roots, remaining);
+      bytes = await readLocalFile(file_path, roots, remaining, config.access);
     } else {
       if (content_base64.length > 4 * Math.ceil(remaining / 3)) {
         throw new Error("upload exceeds MM_MAX_UPLOAD_BYTES");
