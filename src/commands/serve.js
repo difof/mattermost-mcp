@@ -1,24 +1,15 @@
-import { resolveConfig } from "../credentials.js";
-import { httpSettings } from "../http/config.js";
 import { listenHttp } from "../http/listener.js";
 import { log } from "../log.js";
-import { createSession } from "../mattermost/client.js";
+import { serviceRuntime } from "../service/runtime.js";
 
 export async function runServe() {
-  const settings = httpSettings();
-  const config = resolveConfig();
-  if (settings.token === config.auth.token)
-    throw new Error("Use a separate HTTP bearer; do not reuse the Mattermost token");
-  const session = await createSession(config);
-  const http = await listenHttp(session, settings);
-  let stopEvents;
+  const runtime = await serviceRuntime();
+  const http = await listenHttp(runtime.getSession, runtime.http, runtime.admin);
   try {
-    if (settings.eventsEnabled) {
-      const { startEvents } = await import("../events/index.js");
-      stopEvents = await startEvents({ config, session });
-    }
+    await runtime.start();
   } catch (err) {
     await http.close();
+    await runtime.close();
     throw err;
   }
   log(`serving MCP at ${http.url}`);
@@ -26,7 +17,7 @@ export async function runServe() {
   const shutdown = () => {
     stopping ??= http
       .close()
-      .finally(() => stopEvents?.())
+      .finally(() => runtime.close())
       .catch(() => {
         log("service shutdown failed");
         process.exitCode = 1;
