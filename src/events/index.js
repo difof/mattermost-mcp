@@ -4,6 +4,7 @@ import { isAbsolute, join } from "node:path";
 import { log } from "../log.js";
 import { DEFAULT_RETENTION_HOURS, openCache } from "./cache.js";
 import { callbackTargets } from "./callbacks.js";
+import { postAccess } from "./post-presentation.js";
 import { createSubscriptions } from "./subscriptions.js";
 import { cacheAccess } from "./cache-access.js";
 import { openDirectory } from "./directory.js";
@@ -55,6 +56,7 @@ export async function startEvents({
       // An unactivated candidate may reference the same session as the active service.
       if (session.cache === cache) {
         delete session.cacheStatus;
+        delete session.cacheHealth;
         delete session.cache;
         delete session.subscriptions;
       }
@@ -73,6 +75,7 @@ export async function startEvents({
       subscriptions.revokeDisabledTargets();
     });
     session.cacheStatus = "connecting";
+    session.cacheHealth = { lastCompleteAt: null, failedChannels: 0, ambiguousChannels: 0 };
     session.cache = cache;
     session.subscriptions = subscriptions;
     if (!config.guardrails.readOnly) subscriptions.start();
@@ -89,6 +92,7 @@ export async function startEvents({
       session,
       refreshDirectory: directory.refresh,
       invalidateDirectory: directory.invalidate,
+      watchMembership: directory.watch,
       retentionMs: cache.retentionMs,
       checkpoint: cache.checkpoint,
       enqueue(record) {
@@ -96,18 +100,19 @@ export async function startEvents({
         subscriptions.wake();
       },
       enqueueBatch(records) {
-        cache.applyBatch(records);
+        cache.applyBatch(records, { authoritative: true });
         subscriptions.wake();
       },
       purgeChannel: cache.purgeChannel,
       cachedIds: cache.cachedIds,
       reconcileMissing: cache.reconcileMissing,
-      onStatus(state) {
+      onStatus(state, health) {
+        Object.assign(session.cacheHealth, health);
         session.cacheStatus = state;
         if (state === "connected")
           log(`Mattermost message cache connected; ${retentionHours}-hour catch-up complete`);
         else if (state === "partial")
-          log("Mattermost message cache live; history had an ambiguous timestamp boundary");
+          log("Mattermost message cache live; history partially reconciled");
       },
     });
   };
@@ -116,15 +121,24 @@ export async function startEvents({
     cache.directory = openDirectory(cache);
     directory = createDirectoryRefresh(session, cache);
     cache.refreshDirectory = directory.refresh;
+    cache.refreshMembership = (signal) => directory.refresh(signal, false);
+    cache.directoryPage = directory.page;
     subscriptions = createSubscriptions({
       cache,
       targets,
       account,
       deferred: true,
-      authorize: async (ids, signal) => {
+      authorize: async (ids, signal, records) => {
         const access = await cacheAccess(session, cache, signal);
-        await access.check(ids);
-        return access.allows;
+        await access.check(ids, { partial: true });
+        const posts = postAccess(session, cache, access, signal);
+        if (!posts) return access.decision;
+        await posts.check(
+          records.filter((row) => access.allows(row.channelId)),
+          { partial: true },
+        );
+        return (id, row) =>
+          access.decision(id) !== true ? access.decision(id) : posts.allows(row) ? true : undefined;
       },
     });
     if (!deferActivation) await close.activate();
