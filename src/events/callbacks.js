@@ -26,6 +26,7 @@ const basic = (value) => "Basic " + Buffer.from("opencode:" + value).toString("b
 /** Only the service operator grants callback destinations and credentials. Never follow redirects. */
 export function callbackTargets(env = process.env) {
   const hooks = new Map();
+  const secretFiles = new Set();
   if (env.MM_CALLBACK_TARGETS_FILE) {
     const entries = JSON.parse(readSecretFile(env.MM_CALLBACK_TARGETS_FILE));
     if (!Array.isArray(entries)) throw new Error("Callback targets must be a JSON array");
@@ -35,6 +36,7 @@ export function callbackTargets(env = process.env) {
       const secret = file && isAbsolute(file) ? readSecretFile(file) : null;
       if (file && (!secret || /[\r\n]/.test(secret)))
         throw new Error("Invalid callback bearer file");
+      if (file) secretFiles.add(file);
       hooks.set(key, {
         kind: "webhook",
         url: key,
@@ -52,6 +54,7 @@ export function callbackTargets(env = process.env) {
       !env.MM_OPENCODE_PASSWORD_FILE
     )
       throw new Error("Configure OpenCode with its loopback HTTP origin and private password file");
+    secretFiles.add(env.MM_OPENCODE_PASSWORD_FILE);
     const password = readSecretFile(env.MM_OPENCODE_PASSWORD_FILE);
     if (!password || /[\r\n]/.test(password)) throw new Error("Invalid OpenCode password file");
     oc = { origin: u.origin, headers: { authorization: basic(password) } };
@@ -69,7 +72,7 @@ export function callbackTargets(env = process.env) {
     if (!hook) throw new Error("Callback destination is not enabled on this service");
     return hook;
   }
-  return { resolve };
+  return { resolve, secretFiles };
 }
 
 export async function deliverCallback(target, subscriptionId, account, post, signal) {
