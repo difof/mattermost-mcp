@@ -2,7 +2,9 @@
 
 ## Find existing personal conversations
 
-Use the following read operations through `api_call` after describing the required schemas.
+With the shared service, start with `list_cached_conversations`. Its account and joined DMs, groups and channels are independent of the message retention window. For a known DM partner, resolve their exact user ID, filter by `peer_user_id`, and use the returned channel ID. An empty inbox pull does not rule out an existing DM.
+
+For stdio or details outside the directory, use the following read operations through `api_call` after describing the required schemas.
 These are API arguments, independent of the harness's tool-call syntax.
 
 | Purpose                                         | Arguments                                                                                    |
