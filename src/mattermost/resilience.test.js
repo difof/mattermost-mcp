@@ -90,6 +90,52 @@ describe("withRetry", () => {
     expect(fn).toHaveBeenCalledTimes(1);
   });
 });
+it("interrupts a long backoff immediately on caller abort and honors bounded Retry-After", async () => {
+  let fail;
+  const control = new AbortController();
+  const started = new Promise((resolve) => {
+    fail = resolve;
+  });
+  const fn = vi.fn(async () => {
+    fail();
+    throw mmError(503);
+  });
+  const run = withRetry(
+    fn,
+    cfg({ baseDelayMs: 60000 }),
+    undefined,
+    undefined,
+    undefined,
+    control.signal,
+  );
+  await started;
+  control.abort();
+  await expect(run).rejects.toMatchObject({ name: "AbortError" });
+  expect(fn).toHaveBeenCalledTimes(1);
+  const small = Object.assign(mmError(429), { retryAfter: "2" }),
+    large = Object.assign(mmError(429), { retryAfter: "900" });
+  const delays = [];
+  await expect(
+    withRetry(
+      vi.fn().mockRejectedValueOnce(small).mockRejectedValueOnce(large),
+      cfg(),
+      async (ms) => {
+        delays.push(ms);
+      },
+      () => 0,
+    ),
+  ).rejects.toBe(large);
+  expect(delays).toEqual([2000]); // do not send before a longer Retry-After just to fit our budget
+  await withRetry(
+    vi.fn().mockRejectedValueOnce(mmError(503)).mockResolvedValueOnce("ok"),
+    cfg({ baseDelayMs: 60000 }),
+    async (ms) => {
+      delays.push(ms);
+    },
+    () => 0,
+  );
+  expect(delays.at(-1)).toBe(10000);
+});
 describe("trusted operation retry policy", () => {
   it.each([
     { method: "GET", retrySafe: false, calls: 1 },
