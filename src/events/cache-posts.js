@@ -7,14 +7,14 @@ export const CLEAR =
 
 export function postWriter(db, retentionMs) {
   const prior = db.prepare(
-    "SELECT updatedAt, message IS NULL AS deleted FROM posts WHERE postId=?",
+    "SELECT updatedAt, verifiedView, message IS NULL AS deleted FROM posts WHERE postId=?",
   );
   const insert = db.prepare(
     "INSERT INTO posts(postId,channelId,createdAt,updatedAt,senderId,rootId,channelType,direction,isMention,message,fileIds) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
   );
   const update =
-    db.prepare(`UPDATE posts SET updatedAt=?, senderId=?, rootId=?, channelType=?, direction=?, isMention=?, message=?, fileIds=?
-      WHERE postId=? AND channelId=? AND message IS NOT NULL AND updatedAt < ?`);
+    db.prepare(`UPDATE posts SET updatedAt=?, senderId=?, rootId=?, channelType=?, direction=?, isMention=?, message=?, fileIds=?, verifiedView=?
+      WHERE postId=? AND channelId=? AND message IS NOT NULL AND updatedAt <= ?`);
 
   const tombstone =
     db.prepare(`INSERT INTO posts(postId,channelId,createdAt,updatedAt) VALUES(?,?,?,?)
@@ -23,7 +23,7 @@ export function postWriter(db, retentionMs) {
   const clearReplies = db.prepare(
     `UPDATE posts SET ${CLEAR},updatedAt=? WHERE channelId=? AND rootId=? AND message IS NOT NULL AND postId!=?`,
   );
-  return function write(record, cutoff) {
+  return function write(record, cutoff, authoritative = false) {
     const { postId, channelId, createdAt, updatedAt } = record;
     if (
       !isMattermostId(postId) ||
@@ -41,7 +41,14 @@ export function postWriter(db, retentionMs) {
       if (!stored?.deleted) tombstone.run(postId, channelId, createdAt, observedAt);
       return false;
     }
-    if (createdAt <= cutoff || stored?.deleted || (stored && stored.updatedAt >= updatedAt))
+    if (
+      createdAt <= cutoff ||
+      stored?.deleted ||
+      (stored &&
+        (stored.updatedAt > updatedAt ||
+          (stored.updatedAt === updatedAt &&
+            (!authoritative || (stored.verifiedView && authoritative !== "single-post")))))
+    )
       return false;
     const {
       senderId,
@@ -76,7 +83,14 @@ export function postWriter(db, retentionMs) {
       insert.run(postId, channelId, createdAt, updatedAt, ...values);
       return true;
     }
-    update.run(updatedAt, ...values, postId, channelId, updatedAt);
+    update.run(
+      updatedAt,
+      ...values,
+      Number(authoritative === "single-post"),
+      postId,
+      channelId,
+      updatedAt,
+    );
     return false;
   };
 }
