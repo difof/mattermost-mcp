@@ -1,3 +1,4 @@
+import { pendingId, postRequestId } from "./post-request-id.js";
 import { z } from "zod";
 import { routeSegment } from "./route-params.js";
 // ---------------------------------------------------------------------------
@@ -9,6 +10,7 @@ const postMessage = {
   description: "Send a new message to a channel (POST /posts).",
   inputSchema: z
     .object({
+      request_id: postRequestId,
       channel_id: routeSegment.describe("Channel to post in."),
       message: z.string().describe("Message text."),
       root_id: z
@@ -30,6 +32,7 @@ const postMessage = {
   handler: (args, { session }) =>
     session.call((c) =>
       c.createPost({
+        ...pendingId(args, session.userId, args.channel_id),
         channel_id: args.channel_id,
         message: args.message,
         ...(args.root_id != null ? { root_id: args.root_id } : {}),
@@ -47,6 +50,7 @@ const replyThread = {
   description: "Reply to an existing thread (POST /posts with root_id).",
   inputSchema: z
     .object({
+      request_id: postRequestId,
       channel_id: routeSegment.describe("Channel the thread lives in."),
       root_id: routeSegment.describe("Root post id of the thread."),
       message: z.string().describe("Reply text."),
@@ -59,6 +63,7 @@ const replyThread = {
   handler: (args, { session }) =>
     session.call((c) =>
       c.createPost({
+        ...pendingId(args, session.userId, args.channel_id),
         channel_id: args.channel_id,
         message: args.message,
         root_id: args.root_id,
@@ -114,7 +119,9 @@ const getChannelPosts = {
     }),
   resources: (args) => ({ channelId: args.channel_id }),
   resultScope: "posts",
-  handler: (args, { session }) => {
+  handler: async (args, { session, resources }) => {
+    if (args.before || args.after)
+      await resources.assertAnchor(args.before ?? args.after, args.channel_id);
     const page = args.page ?? 0;
     const perPage = args.per_page ?? 60;
     if (args.since != null) {
@@ -237,6 +244,7 @@ const sendDm = {
     "Open a direct (2-person) or group (3–8 person) channel and send a message (POST /channels/direct | /channels/group + POST /posts).",
   inputSchema: z
     .object({
+      request_id: postRequestId,
       user_ids: z
         .array(routeSegment)
         .min(1)
@@ -265,7 +273,13 @@ const sendDm = {
     const channel = await session.call((c) =>
       members.length === 2 ? c.createDirectChannel(members) : c.createGroupChannel(members),
     );
-    return session.call((c) => c.createPost({ channel_id: channel.id, message: args.message }));
+    return session.call((c) =>
+      c.createPost({
+        channel_id: channel.id,
+        message: args.message,
+        ...pendingId(args, session.userId, channel.id),
+      }),
+    );
   },
 };
 // ---------------------------------------------------------------------------
