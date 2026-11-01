@@ -19,6 +19,22 @@ it("requires one independent, private HTTP bearer source and rejects invalid ser
       expect(() => httpSettings({ MM_HTTP_TOKEN_FILE: file })).toThrow(/private/);
     }
     expect(() => httpSettings({ MM_HTTP_TOKEN: "short" })).toThrow(/32/);
+    if (process.platform !== "win32") chmodSync(file, 0o600);
+    expect(() => httpSettings({ MM_HTTP_TOKEN: token, MM_ADMIN_TOKEN_FILE: file })).toThrow(
+      /different/,
+    );
+    expect(() => httpSettings({ MM_HTTP_TOKEN: token, MM_ADMIN_TOKEN: "raw" })).toThrow(/FILE/);
+    const adminToken = "b".repeat(48);
+    writeFileSync(file, adminToken + "\n");
+    expect(httpSettings({ MM_HTTP_TOKEN: token, MM_ADMIN_TOKEN_FILE: file }).adminToken).toBe(
+      adminToken,
+    );
+    if (process.platform !== "win32") {
+      chmodSync(file, 0o644);
+      expect(() => httpSettings({ MM_HTTP_TOKEN: token, MM_ADMIN_TOKEN_FILE: file })).toThrow(
+        /private/,
+      );
+    }
     for (const extra of [
       { MM_HTTP_PORT: "0" },
       { MM_HTTP_MAX_BODY_BYTES: "-1" },
