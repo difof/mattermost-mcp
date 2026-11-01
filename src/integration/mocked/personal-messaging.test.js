@@ -99,6 +99,29 @@ describe("personal messaging through MCP and the Mattermost HTTP API", () => {
       expect(await mm.call("set_custom_status", custom)).toEqual(OK);
     }
   });
+  it("forwards a stable pending ID on a caller-initiated retry without leaking the tool key", async () => {
+    const mm = fixture(),
+      seen = [];
+    for (const channel_id of ["team-room", "team-room", "another-room"]) {
+      mm.expect("POST", "/posts", {
+        inspectBody: (bytes) => {
+          const post = JSON.parse(bytes);
+          expect(post).toMatchObject({ channel_id, message: "fixture" });
+          expect(post.request_id).toBeUndefined();
+          expect(post.pending_post_id).toMatch(/^mcp-[a-f0-9]{64}$/);
+          seen.push(post.pending_post_id);
+        },
+        reply: { id: "mock-post", channel_id, message: "fixture" },
+      });
+      await mm.call("post_message", {
+        channel_id,
+        message: "fixture",
+        request_id: "b3f3d80e-1251-4128-a7f7-58f27fecb2ff",
+      });
+    }
+    expect(seen[0]).toBe(seen[1]);
+    expect(seen[0]).not.toBe(seen[2]);
+  });
   it("opens an existing DM or a group with raw participant arrays and sends as the PAT owner", async () => {
     const mm = fixture();
     for (const [kind, recipients] of [
@@ -203,6 +226,26 @@ describe("personal messaging through MCP and the Mattermost HTTP API", () => {
     });
     expect(await mm.call("get_thread", { post_id: "thread-post-0" })).toEqual(thread);
   });
+  it("refuses to use a post from another channel as a pagination anchor in either transport", async () => {
+    const mm = fixture();
+    for (const [tool, args] of [
+      ["get_channel_posts", { channel_id: "visible", before: "cursor" }],
+      [
+        "api_call",
+        {
+          operation: "GET /api/v4/channels/{channel_id}/posts",
+          path: { channel_id: "visible" },
+          query: { after: "cursor" },
+        },
+      ],
+    ]) {
+      mm.expect("GET", "/posts/cursor", { reply: { id: "cursor", channel_id: "excluded-marker" } });
+      const error = await mm.error(tool, args);
+      expect(error).toContain("pagination anchor is not available");
+      expect(error).not.toContain("excluded-marker");
+    }
+  });
+
   it.each([
     { name: "default page", args: {}, query: { page: 0, per_page: 60 } },
     { name: "explicit page", args: { page: 2, per_page: 25 }, query: { page: 2, per_page: 25 } },
@@ -222,6 +265,11 @@ describe("personal messaging through MCP and the Mattermost HTTP API", () => {
     async ({ args, query }) => {
       const mm = fixture();
       const empty = { order: [], posts: {}, next_post_id: "", prev_post_id: "" };
+      if (args.before || args.after) {
+        mm.expect("GET", "/posts/cursor", {
+          reply: { id: "cursor", channel_id: "project-channel" },
+        });
+      }
       mm.expect("GET", "/channels/project-channel/posts", {
         query: { ...THREAD_FLAGS, ...query },
         reply: empty,
