@@ -40,7 +40,7 @@ The process uses the saved login. For environment-based credentials, see
 
 **Install this fork from source.** The upstream npm package does not include this fork's changes.
 
-For multiple local harnesses, run one [shared HTTP service](docs/shared-service.md). It can keep two days of incoming and outgoing messages in local SQLite. Agents can pull filtered messages or explicitly subscribe a callback for a limited time.
+For multiple local harnesses, run one [shared HTTP service](docs/shared-service.md). It can cache incoming and outgoing messages in local SQLite (48 hours by default) and send time-limited callbacks. Use the optional [admin connection](docs/admin-settings.md) to change settings live or reload rotated credentials.
 
 ## Agent skill
 
