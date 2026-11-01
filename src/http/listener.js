@@ -2,9 +2,12 @@ import { timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { makeMcpServer } from "../server.js";
+import { makeAdminMcpServer } from "../service/admin-mcp.js";
 import { log } from "../log.js";
 
 const HOST = "127.0.0.1";
+// Keep management reachable even if the ordinary request size is set too low.
+const ADMIN_BODY_BYTES = 16 * 1024;
 
 function reject(response, status, message, headers = {}) {
   response
@@ -38,50 +41,78 @@ async function requestBody(req, limit) {
     chunks.push(chunk);
   }
   try {
-    return { value: JSON.parse(Buffer.concat(chunks, size).toString("utf8")) };
+    return { value: JSON.parse(Buffer.concat(chunks, size).toString("utf8")), size };
   } catch {
     return { status: 400 };
   }
 }
 
-function requestHandler(session, { token, maxBodyBytes, eventsEnabled }) {
+function authorized(req, token) {
+  if (!token || req.headersDistinct.authorization?.length !== 1) return false;
   const expected = Buffer.from("Bearer " + token);
+  const actual = Buffer.from(req.headers.authorization ?? "");
+  return actual.length === expected.length && timingSafeEqual(expected, actual);
+}
+
+function unauthorized(res) {
+  return reject(res, 401, "Bearer authentication required", { "www-authenticate": "Bearer" });
+}
+
+async function dispatch(mcp, req, res, value) {
+  try {
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+      enableJsonResponse: true,
+    });
+    await mcp.connect(transport);
+    await transport.handleRequest(req, res, value);
+  } finally {
+    await mcp.close();
+  }
+}
+
+function requestHandler(sessionOrGetter, settings, admin) {
+  const acquire =
+    typeof sessionOrGetter === "function"
+      ? (sessionOrGetter.acquire ?? (() => ({ session: sessionOrGetter() })))
+      : () => ({ session: sessionOrGetter });
   return async (req, res) => {
     if (!loopbackRequest(req)) return reject(res, 403, "Invalid Host or Origin");
-    const actual = Buffer.from(req.headers.authorization ?? "");
-    if (
-      req.headersDistinct.authorization?.length !== 1 ||
-      actual.length !== expected.length ||
-      !timingSafeEqual(expected, actual)
-    ) {
-      return reject(res, 401, "Bearer authentication required", { "www-authenticate": "Bearer" });
+    const management = req.url === "/mcp/admin";
+    if (management ? !admin || !settings.adminToken : req.url !== "/mcp") {
+      return reject(res, 404, "Not found");
     }
-    if (req.url !== "/mcp") return reject(res, 404, "Not found");
+    // Select the credential by endpoint, never by the caller's requested tool name.
+    const key = management ? "adminToken" : "token";
+    if (!authorized(req, settings[key])) return unauthorized(res);
     if (req.method !== "POST") return reject(res, 405, "Use POST", { allow: "POST" });
     if (req.headers["content-type"]?.split(";")[0].trim().toLowerCase() !== "application/json") {
       return reject(res, 415, "Expected application/json");
     }
-    if (eventsEnabled && !session.cache) return reject(res, 503, "Message cache is starting");
-    const body = await requestBody(req, maxBodyBytes);
+    const body = await requestBody(req, management ? ADMIN_BODY_BYTES : settings.maxBodyBytes);
     if (body.status)
       return reject(res, body.status, body.status === 413 ? "Request too large" : "Invalid JSON");
     if (res.destroyed) return;
-    const mcp = makeMcpServer(session);
+    // A credential can rotate while a slow request is uploading its body.
+    if (!authorized(req, settings[key])) return unauthorized(res);
+    if (!management && body.size > settings.maxBodyBytes)
+      return reject(res, 413, "Request too large");
+    if (management) return dispatch(makeAdminMcpServer(admin), req, res, body.value);
+
+    const lease = acquire();
     try {
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: undefined,
-        enableJsonResponse: true,
-      });
-      await mcp.connect(transport);
-      await transport.handleRequest(req, res, body.value);
+      if (!lease?.session || (settings.eventsEnabled && !lease.session.cache)) {
+        return reject(res, 503, "MCP service is reconfiguring");
+      }
+      return await dispatch(makeMcpServer(lease.session), req, res, body.value);
     } finally {
-      await mcp.close();
+      lease?.release?.();
     }
   };
 }
 
-export async function listenHttp(session, settings) {
-  const handle = requestHandler(session, settings);
+export async function listenHttp(sessionOrGetter, settings, admin) {
+  const handle = requestHandler(sessionOrGetter, settings, admin);
   const http = createServer({ requestTimeout: 30000, headersTimeout: 10000 }, (req, res) => {
     handle(req, res).catch(() => {
       if (res.destroyed) return;
