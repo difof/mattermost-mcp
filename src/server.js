@@ -4,6 +4,7 @@ import { resolveConfig } from "./credentials.js";
 import { createSession } from "./mattermost/client.js";
 import { registerTools } from "./tools/registry.js";
 import { allTools } from "./tools/index.js";
+import { cachedDirectoryTool } from "./tools/cached-directory.js";
 import { cachedMessagesTool } from "./tools/cached-messages.js";
 import { subscriptionTools } from "./tools/subscriptions.js";
 import { log } from "./log.js";
@@ -15,7 +16,9 @@ export function makeMcpServer(session) {
     { capabilities: { tools: {} } },
   );
   // tools/list + tools/call dispatched from the registry, sharing the session.
-  const tools = session.cache ? [...allTools, cachedMessagesTool, ...subscriptionTools] : allTools;
+  const tools = session.cache
+    ? [...allTools, cachedMessagesTool, cachedDirectoryTool, ...subscriptionTools]
+    : allTools;
   registerTools(server, tools, { session });
   return server;
 }
