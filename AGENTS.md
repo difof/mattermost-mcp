@@ -69,6 +69,7 @@ WebSocket events are separate from the REST executor; see [the shared service](d
 
 ## Verification and delivery
 
+- Validate changes to cache access or transports with the mock membership-race, inbox retry and cancellation regressions. Never consume real unread posts for a health check; use `get_inbox_status`.
 - Run `node scripts/check-portability.mjs` on tracked files before publishing. Keep operator paths, account names, credential files and SQLite state out of examples, tests and commits.
 - Install locked dependencies with `npm ci`. Use `npm run lint` for ESLint/Prettier,
   `npx --no-install vitest run <test-file>` for focused tests, `npm run test:mocks` for MCP-to-HTTP
