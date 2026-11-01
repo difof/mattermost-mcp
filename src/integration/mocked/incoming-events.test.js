@@ -1,6 +1,10 @@
 import { expect, it, vi } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { WebSocketServer } from "ws";
 import { buildClient } from "../../mattermost/client.js";
+import { openCache, RETENTION_MS } from "../../events/cache.js";
 import { selectPostedFrame } from "../../events/filter.js";
 import { startListener } from "../../events/listener.js";
 import { useMattermost } from "./mattermost-http-fixture.js";
@@ -12,54 +16,71 @@ const channel = id("c"),
   denied = id("d");
 const post = (key, extra = {}) => ({
   id: id(key),
-  create_at: Date.now(),
+  create_at: Date.now() - 10000,
   user_id: peer,
   channel_id: channel,
-  message: "private text stays in Mattermost",
+  message: "original content",
   type: "",
   ...extra,
 });
-const frame = (p, type, mentions = []) => ({
-  event: "posted",
+const frame = (p, event = "posted", type = "P") => ({
+  event,
   broadcast: { channel_id: p.channel_id },
-  data: { channel_type: type, post: JSON.stringify(p), mentions: JSON.stringify(mentions) },
+  data: { ...(type ? { channel_type: type } : {}), post: JSON.stringify(p) },
 });
 const listed = (posts) => ({
   order: posts.map((p) => p.id),
   posts: Object.fromEntries(posts.map((p) => [p.id, p])),
 });
 
-it("only wakes for a real personal mention, not broadcasts, code, addresses, a longer handle or edits", () => {
-  for (const message of [
-    "hi @channel",
-    "`@my.name` and @all",
-    "send to team@my.name",
-    "not @my.name.other",
-    "https://example.test/@my.name",
-    "[link](https://example.test/@my.name)",
-  ]) {
-    expect(selectPostedFrame(frame(post("x", { message }), "P", [me.id]), me)).toBeNull();
-  }
-  const p = post("x", { message: "Hi ＠My.Name, take a look" });
-  expect(selectPostedFrame(frame(p, "G", []), me)).toBeNull();
-  expect(selectPostedFrame({ ...frame(p, "P", [me.id]), event: "post_edited" }, me)).toBeNull();
-  expect(selectPostedFrame(frame({ ...p, user_id: me.id }, "D"), me)).toBeNull();
-  expect(selectPostedFrame(frame({ ...p, type: "system_join_channel" }, "D"), me)).toBeNull();
-  expect(selectPostedFrame(frame(p, "G", [me.id]), me)).toEqual({
-    kind: "mention",
-    postId: p.id,
+it("keeps inbound and outbound conversations including file-only replies; filters system notices and private props", () => {
+  const base = post("x", {
+    root_id: id("r"),
+    message: "",
+    file_ids: [id("f")],
+    user_id: me.id,
+    props: { secret: "never cache" },
+    metadata: { embeds: ["not part of the post"] },
+  });
+  expect(selectPostedFrame(frame(base, "posted", "G"), me)).toEqual({
+    postId: base.id,
     channelId: channel,
-    rootId: p.id,
-    senderId: peer,
-    createdAt: p.create_at,
+    createdAt: base.create_at,
+    updatedAt: base.create_at,
+    senderId: me.id,
+    rootId: id("r"),
+    direction: "outgoing",
+    message: "",
+    fileIds: [id("f")],
+    channelType: "G",
+    isMention: false,
+  });
+  const incoming = post("y", { message: "Hi ＠My.Name!" });
+  expect(selectPostedFrame(frame(incoming, "post_edited", "O"), me)).toMatchObject({
+    direction: "incoming",
+    isMention: true,
+  });
+  expect(
+    selectPostedFrame(frame({ ...incoming, message: "see `@my.name` and @channel" }), me),
+  ).toMatchObject({ isMention: false });
+  expect(selectPostedFrame(frame({ ...base, type: "system_join_channel" }), me)).toBeNull();
+  expect(selectPostedFrame(frame({ ...base, type: "burn_on_read" }), me)).toBeNull();
+  const deletedAt = Date.now();
+  expect(
+    selectPostedFrame(frame({ ...base, delete_at: deletedAt }, "post_deleted", null), me),
+  ).toEqual({
+    postId: base.id,
+    channelId: channel,
+    createdAt: base.create_at,
+    updatedAt: deletedAt,
+    deleted: true,
   });
 });
 
 const fixture = useMattermost({ user: me, guardrails: { channelAllowlist: [channel] } });
-
-it("authenticates the socket, retains live events, then fills a sequence gap from bounded allowed history", async () => {
-  const f = fixture();
-  const client = buildClient(f.url, 2000);
+it("reconciles the full rolling window while receiving live posts, fixes offline edits/deletes and purges revoked channels", async () => {
+  const f = fixture(),
+    client = buildClient(f.url, 2000);
   client.setToken("test-only-personal-pat");
   const session = {
     client,
@@ -67,78 +88,112 @@ it("authenticates the socket, retains live events, then fills a sequence gap fro
     config: { guardrails: f.guardrails },
     call: (fn) => fn(client),
   };
+  const dir = await mkdtemp(join(tmpdir(), "mm-cache-recovery-")),
+    cache = await openCache(join(dir, "messages.sqlite"));
   const ws = new WebSocketServer({ server: f.http, path: "/mattermost/api/v4/websocket" });
   const sockets = [],
-    upgrades = [];
+    upgrades = [],
+    states = [];
   ws.on("connection", (s, request) => {
     sockets.push(s);
-    upgrades.push([request.url, request.headers.authorization]);
-    s.send(JSON.stringify({ event: "hello", seq: 0, data: { connection_id: "synthetic" } }));
+    upgrades.push(request.headers.authorization);
+    s.send(JSON.stringify({ event: "hello", seq: 0, data: { connection_id: "test" } }));
   });
-  const expectMembership = (channels) => {
-    f.expect("GET", "/users/me", { reply: me, fetchRedirect: "manual" });
-    f.expect("GET", "/users/me/channels", {
-      query: { include_deleted: true },
-      reply: channels,
-      fetchRedirect: "manual",
-    });
+  const group = [
+    { id: channel, type: "P", last_post_at: Date.now() },
+    { id: denied, type: "D", last_post_at: Date.now() },
+  ];
+  const member = (channels) => {
+    f.expect("GET", "/users/me", { reply: me });
+    f.expect("GET", "/users/me/channels", { query: { include_deleted: true }, reply: channels });
   };
-  let watermark = null;
-  const events = new Map(),
-    arrivals = [],
-    states = [];
-  // Cold install: pre-existing history/forbidden channels require no post reads.
-  expectMembership([
-    { id: channel, type: "D", last_post_at: 1 },
-    { id: denied, type: "D", last_post_at: Date.now() + 10000 },
-  ]);
+  const page = (posts, before, extra = {}) =>
+    f.expect("GET", "/channels/" + channel + "/posts", {
+      query: { per_page: 60, skipFetchThreads: true, ...(before ? { before } : {}) },
+      reply: listed(posts),
+      ...extra,
+    });
+  const old = post("z", { create_at: Date.now() - RETENTION_MS - 3000 });
+  const original = post("e"),
+    laterDeleted = post("g"),
+    mine = post("m", { user_id: me.id });
+  const live = post("v", { edit_at: Date.now(), id: original.id, message: "latest live edit" });
+  let release,
+    entered = false;
+  const hold = new Promise((resolve) => {
+    release = resolve;
+  });
+  member(group);
+  page([original, laterDeleted], null, {
+    inspectBody: async () => {
+      entered = true;
+      await hold;
+    },
+  });
+  page([mine, old], laterDeleted.id);
   const stop = await startListener({
     session,
-    getCheckpoint: () => watermark,
-    checkpoint: async (t) => {
-      watermark = t;
-    },
-    enqueue: async (e) => {
-      arrivals.push(e.postId);
-      events.set(e.postId, e);
-    },
+    ...cache,
+    enqueue: cache.apply,
+    enqueueBatch: cache.applyBatch,
     onStatus: (s) => states.push(s),
   });
+  const rows = () => cache.list({}).messages;
   try {
+    await vi.waitFor(() => expect(entered).toBe(true));
+    sockets[0].send(JSON.stringify({ ...frame(post("u", { channel_id: denied })), seq: 1 }));
+    sockets[0].send(JSON.stringify({ ...frame(live, "post_edited", null), seq: 2 }));
+    await vi.waitFor(() => expect(rows().map((p) => p.message)).toEqual(["latest live edit"]));
+    release();
     await vi.waitFor(() => expect(states).toContain("connected"));
-    expect(watermark).toBeGreaterThan(0);
-    const live = post("e"),
-      missed = post("f"),
-      old = post("g", { create_at: watermark - 1 });
-    sockets[0].send(JSON.stringify({ ...frame(post("h", { channel_id: denied }), "D"), seq: 1 }));
-    sockets[0].send(JSON.stringify({ ...frame(live, "D"), seq: 2 }));
-    await vi.waitFor(() => expect(arrivals).toEqual([live.id]));
-    expectMembership([
-      { id: denied, type: "D", last_post_at: Date.now() },
-      { id: channel, type: "D", last_post_at: Date.now() },
-    ]);
-    f.expect("GET", "/channels/" + channel + "/posts", {
-      query: { per_page: 60, skipFetchThreads: true },
-      reply: listed([missed, live]),
-      fetchRedirect: "manual",
-    });
-    f.expect("GET", "/channels/" + channel + "/posts", {
-      query: { per_page: 60, skipFetchThreads: true, before: live.id },
-      reply: listed([old]),
-      fetchRedirect: "manual",
-    });
-    sockets[0].send(JSON.stringify({ event: "typing", seq: 4 })); // seq 3 was lost
-    await vi.waitFor(() => expect(states.filter((s) => s === "connected")).toHaveLength(2), {
-      timeout: 4000,
-    });
-    expect([...events.keys()]).toEqual([live.id, missed.id]);
-    expect(arrivals.filter((x) => x === live.id)).toHaveLength(2); // durable outbox keys both sources by post ID
-    expect(upgrades).toEqual(
-      Array(2).fill(["/mattermost/api/v4/websocket", "Bearer test-only-personal-pat"]),
+    expect(rows().find((r) => r.postId === original.id)?.message).toBe("latest live edit");
+    expect(rows().find((r) => r.postId === mine.id)?.direction).toBe("outgoing");
+    expect(rows().map((r) => r.postId)).not.toContain(old.id);
+    const newDm = post("h", { root_id: id("t"), file_ids: [id("i")], message: "" });
+    sockets[0].send(JSON.stringify({ ...frame(newDm), seq: 3 }));
+    await vi.waitFor(() =>
+      expect(rows().find((row) => row.postId === newDm.id)?.fileIds).toEqual([id("i")]),
     );
+    sockets[0].send(JSON.stringify({ ...frame(newDm, "post_deleted", null), seq: 4 }));
+    await vi.waitFor(() => expect(rows()).toHaveLength(3));
+    const missed = post("j", { message: "new while disconnected" });
+    member(group);
+    page([
+      missed,
+      { ...original, edit_at: Date.now() + 2, message: "edited while disconnected" },
+      mine,
+      old,
+    ]);
+    sockets[0].send(JSON.stringify({ event: "typing", seq: 6 })); // event 5 was lost
+    await vi.waitFor(() => expect(states.filter((x) => x === "connected")).toHaveLength(2), {
+      timeout: 4500,
+    });
+    expect(
+      rows()
+        .map((r) => r.postId)
+        .sort(),
+    ).toEqual([original.id, mine.id, missed.id].sort());
+    expect(rows().find((r) => r.postId === original.id).message).toBe("edited while disconnected");
+    member([]);
+    sockets[1].send(
+      JSON.stringify({
+        event: "user_removed",
+        seq: 1,
+        broadcast: { user_id: me.id },
+        data: { channel_id: channel },
+      }),
+    );
+    await vi.waitFor(() => expect(rows()).toHaveLength(0));
+    await vi.waitFor(() => expect(states.filter((x) => x === "connected")).toHaveLength(3), {
+      timeout: 4500,
+    });
+    expect(upgrades).toEqual(Array(3).fill("Bearer test-only-personal-pat"));
   } finally {
+    release();
     await stop();
     for (const s of ws.clients) s.terminate();
     await new Promise((resolve) => ws.close(resolve));
+    cache.close();
+    await rm(dir, { recursive: true, force: true });
   }
-});
+}, 12000);
