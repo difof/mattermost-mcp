@@ -7,7 +7,7 @@ const oauth = vi.hoisted(() => ({
   refreshOAuthToken: vi.fn(),
 }));
 vi.mock("./oauth.js", () => oauth);
-const me = { id: "me1", username: "alice" };
+const me = { id: "me1", username: "example-user" };
 function config(auth = { mode: "pat", token: "personal-token" }) {
   return {
     url: "http://mm.test",
@@ -215,7 +215,7 @@ describe("session HTTP request resilience", () => {
   });
 });
 describe("per-request authentication recovery", () => {
-  const password = { mode: "password", loginId: "alice", password: "test-password" };
+  const password = { mode: "password", loginId: "example-user", password: "test-password" };
   it("refreshes a rejected cached OAuth token during startup identity verification", async () => {
     oauth.acquireOAuthToken.mockResolvedValue({
       accessToken: "rejected-cache",
