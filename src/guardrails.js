@@ -39,13 +39,13 @@ export function assertWriteAllowed(tool, args, g) {
 /** Team allowlist (empty list = unrestricted). */
 export function assertTeamAllowed(teamId, g) {
   if (g.teamAllowlist.length > 0 && !g.teamAllowlist.includes(teamId)) {
-    throw new GuardrailError(`refused: team '${teamId}' is not in MM_TEAM_ALLOWLIST`);
+    throw new GuardrailError("refused: resource is not in MM_TEAM_ALLOWLIST");
   }
 }
 /** Channel allowlist (empty list = unrestricted). */
 export function assertChannelAllowed(channelId, g) {
   if (g.channelAllowlist.length > 0 && !g.channelAllowlist.includes(channelId)) {
-    throw new GuardrailError(`refused: channel '${channelId}' is not in MM_CHANNEL_ALLOWLIST`);
+    throw new GuardrailError("refused: resource is not in MM_CHANNEL_ALLOWLIST");
   }
 }
 /**
