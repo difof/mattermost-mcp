@@ -2,7 +2,7 @@
 
 [Back to README](../README.md) · [Tool reference](tools.md) · [Testing](testing.md)
 
-The server exposes **37 core MCP tools**: 34 convenience tools and three on-demand API tools. Five optional local inbox, directory and subscription tools sit outside the REST inventory.
+The server exposes **37 core MCP tools**: 34 convenience tools and three on-demand API tools. Seven optional local inbox, directory and subscription tools sit outside the REST inventory.
 `api_call` covers **all 590 account-compatible core HTTP operations** in the pinned
 **Mattermost v11.11.1** inventory. `api_search` and `api_describe` load operation details locally.
 
@@ -120,7 +120,7 @@ Read-only and destructive checks use trusted operation policy. Audited POST sear
 can be reads; several GET operations have side effects and are classified as writes. In
 particular, policy activation changes access controls, revealing a post records its reveal and
 starts expiration, and system ping can send test push notifications or run write health checks.
-Generic DELETE and security/admin mutations require `MM_ALLOW_DESTRUCTIVE=true` plus
+Bulk export jobs, export-link generation and onboarding are treated as administrative writes. Known credential-bearing OAuth, hook and command reads also require operator opt-in (`MM_ALLOW_SENSITIVE_READS`). Generic DELETE and security/admin mutations require `MM_ALLOW_DESTRUCTIVE=true` plus
 `confirm: true`. Mutations are not retried after ambiguous failures; an explicit 401 rejection
 can trigger the existing one-time account-authentication recovery.
 
@@ -150,7 +150,7 @@ live smoke tests remain explicitly opt-in; no real Mattermost account is used by
 
 ## Reproduce the inventory and catalog
 
-These native Node.js utilities use the development-only npm `yaml` parser. Run `npm ci` to
+CI checks that both generated files match independently pinned input digests. These native Node.js utilities use the development-only npm `yaml` parser. Run `npm ci` to
 install the development dependencies. The audit tools and parser are not required to run
 the packaged MCP server.
 
