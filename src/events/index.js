@@ -6,6 +6,8 @@ import { DEFAULT_RETENTION_HOURS, openCache } from "./cache.js";
 import { callbackTargets } from "./callbacks.js";
 import { createSubscriptions } from "./subscriptions.js";
 import { cacheAccess } from "./cache-access.js";
+import { openDirectory } from "./directory.js";
+import { createDirectoryRefresh } from "./directory-refresh.js";
 import { startListener } from "./listener.js";
 
 function defaultStateDir() {
@@ -40,12 +42,16 @@ export async function startEvents({
     retentionHours,
     deferPrune: true,
   });
-  let subscriptions, timer, stopListener, closing;
+  let subscriptions, timer, stopListener, closing, directory;
 
   const close = () =>
     (closing ??= (async () => {
       clearInterval(timer);
-      const results = await Promise.allSettled([stopListener?.(), subscriptions?.stop()]);
+      const results = await Promise.allSettled([
+        stopListener?.(),
+        subscriptions?.stop(),
+        directory?.close(),
+      ]);
       // An unactivated candidate may reference the same session as the active service.
       if (session.cache === cache) {
         delete session.cacheStatus;
@@ -81,6 +87,8 @@ export async function startEvents({
     timer.unref();
     stopListener = startListener({
       session,
+      refreshDirectory: directory.refresh,
+      invalidateDirectory: directory.invalidate,
       retentionMs: cache.retentionMs,
       checkpoint: cache.checkpoint,
       enqueue(record) {
@@ -91,7 +99,6 @@ export async function startEvents({
         cache.applyBatch(records);
         subscriptions.wake();
       },
-      retainChannels: cache.retainChannels,
       purgeChannel: cache.purgeChannel,
       cachedIds: cache.cachedIds,
       reconcileMissing: cache.reconcileMissing,
@@ -106,6 +113,9 @@ export async function startEvents({
   };
 
   try {
+    cache.directory = openDirectory(cache);
+    directory = createDirectoryRefresh(session, cache);
+    cache.refreshDirectory = directory.refresh;
     subscriptions = createSubscriptions({
       cache,
       targets,
