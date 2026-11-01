@@ -24,10 +24,13 @@ export async function runServe() {
   log(`serving MCP at ${http.url}`);
   let stopping;
   const shutdown = () => {
-    stopping ??= Promise.all([http.close(), stopEvents?.()]).catch(() => {
-      log("service shutdown failed");
-      process.exitCode = 1;
-    });
+    stopping ??= http
+      .close()
+      .finally(() => stopEvents?.())
+      .catch(() => {
+        log("service shutdown failed");
+        process.exitCode = 1;
+      });
   };
   process.once("SIGTERM", shutdown);
   process.once("SIGINT", shutdown);
