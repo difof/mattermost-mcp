@@ -76,3 +76,33 @@ it.each([
     expect(offsets).toEqual(complete ? [] : [1]);
   },
 );
+
+it("keeps healthy channels live and retries only the failed channel", async () => {
+  const rooms = [id(1), id(2), id(3)];
+  const channels = new Map(rooms.map((i) => [i, { id: i, type: "P" }]));
+  const visits = [],
+    states = [];
+  readEventJson.mockImplementation(async (_s, url) => {
+    const room = url.pathname.split("/")[2];
+    visits.push(room);
+    if (room === rooms[1] && visits.filter((c) => c === room).length === 1)
+      throw Object.assign(new Error("temporary upstream failure"), { status_code: 503 });
+    return { order: [], posts: {} };
+  });
+  const { recoverUntilReady } = await import("./recovery-loop.js");
+  await recoverUntilReady({
+    session: { client: { getChannelRoute: (c) => "https://fixture.invalid/channels/" + c } },
+    snapshot: { me, isCurrent: () => true, denyContent: vi.fn() },
+    channels,
+    cache: { retentionMs: 5000, cachedIds: () => [] },
+    time: 5000,
+    stream: {
+      signal: new AbortController().signal,
+      push: (st) => states.push({ ...st, visits: [...visits] }),
+    },
+  });
+  expect(states).toMatchObject([
+    { complete: false, failedChannels: 1, visits: rooms },
+    { complete: true, failedChannels: 0, visits: [...rooms, rooms[1]] },
+  ]);
+});
