@@ -1,5 +1,14 @@
 # @bryanberger/mattermost-mcp
 
+## 0.6.0 (fork)
+
+- Share one Mattermost account across local MCP clients with the authenticated HTTP
+  [service](docs/shared-service.md). The default stdio command still works.
+- Deliver incoming DMs and personal mentions to a chosen OpenCode inbox with reconnect
+  recovery and an ID-only outbox.
+- For Oven Tunnel's older stdio-only aggregate bridge, the [integration patch](examples/gpttun-http.patch)
+  adds HTTP support for the Mattermost upstream while preserving other upstreams.
+
 ## 0.5.0
 
 ### Minor Changes
