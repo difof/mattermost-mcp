@@ -22,25 +22,54 @@ async function mayReadPosts(session, channelId, signal) {
   }
 }
 
-// Decisions last one tool call or delivery batch, never an entire service session.
+// Keep per-call decisions; only the membership coordinator owns global pruning.
+// A stale lookup can filter its own page, never delete a different grant's rows.
 export async function cacheAccess(session, cache, signal = new AbortController().signal) {
-  const joined = await listAccessibleChannels(session, signal);
-  cache.retainChannels(joined.keys());
-  const decisions = new Map();
+  const membership = cache.refreshMembership ? await cache.refreshMembership(signal) : null;
+  let me = membership?.me;
+  if (!me && session.config.cacheVerifyPosts) {
+    const user = await readEventJson(session, session.client.getUserRoute("me"), signal);
+    if (user?.id !== session.userId || !user.username)
+      throw new Error("Unexpected Mattermost account");
+    me = { id: user.id, username: user.username };
+  }
+  const joined = membership?.channels ?? (await listAccessibleChannels(session, signal));
+  const decisions = new Map(),
+    excluded = new Set();
+  const current = (id) => !membership || membership.isCurrent(id);
+  function decision(id) {
+    if (excluded.has(id)) return false;
+    if (!joined.has(id) || !current(id)) {
+      excluded.add(id);
+      return false;
+    }
+    return decisions.get(id);
+  }
+  async function verify(id) {
+    if (decision(id) !== undefined) return;
+    const allowed = await mayReadPosts(session, id, signal);
+    if (!allowed) {
+      if (membership) membership.denyContent(id);
+      // Standalone caches have no running membership writer.
+      else cache.purgeChannel(id);
+      excluded.add(id);
+    }
+    if (allowed) membership?.allowContent(id);
+    decisions.set(id, allowed);
+  }
   return {
-    allows: (id) => decisions.get(id) === true,
-    async check(ids) {
-      const unknown = [...new Set(ids)].filter((id) => !decisions.has(id));
-      for (let i = 0; i < unknown.length; i += 4) {
-        const batch = await Promise.allSettled(
-          unknown.slice(i, i + 4).map(async (id) => {
-            const allowed = joined.has(id) && (await mayReadPosts(session, id, signal));
-            decisions.set(id, allowed);
-            if (!allowed) cache.purgeChannel(id);
-          }),
-        );
-        const failure = batch.find((r) => r.status === "rejected");
-        if (failure) throw failure.reason;
+    excluded,
+    me,
+    decision,
+    allows: (id) => decision(id) === true,
+    denies: (id) => decision(id) === false,
+    async check(ids, { partial = false } = {}) {
+      const unique = [...new Set(ids)];
+      for (let i = 0; i < unique.length; i += 4) {
+        const results = await Promise.allSettled(unique.slice(i, i + 4).map(verify));
+        signal.throwIfAborted();
+        const failed = results.find((r) => r.status === "rejected");
+        if (failed && !partial) throw failed.reason;
       }
     },
   };
