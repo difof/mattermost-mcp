@@ -31,4 +31,9 @@ jobs:
 
       - run: npm test
 
+      - name: Check generated inventory and catalog against pinned upstream source
+        run: |
+          node scripts/audit-api-coverage.mjs --download --cache "$RUNNER_TEMP/mm-api-source" --check
+          node scripts/generate-api-catalog.mjs --download --cache "$RUNNER_TEMP/mm-api-source" --check
+
       - run: npm run build
