@@ -1,5 +1,4 @@
-import { realpathSync } from "node:fs";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { homedir } from "node:os";
 import { resolveConfig } from "../credentials.js";
 import { httpSettings } from "../http/config.js";
@@ -29,34 +28,19 @@ function patFromFile(env) {
   return token;
 }
 
-function validateSecrets(config, http, env) {
+function validateSecrets(config, http) {
   const { token, adminToken } = http;
   const credentials = [token, adminToken, config.auth.token].filter(Boolean);
   if (new Set(credentials).size !== credentials.length) throw serviceError("INVALID_CREDENTIALS");
-  // Ordinary MCP clients can upload files from these roots; the admin credential must not be there.
-  if (env.MM_ADMIN_TOKEN_FILE) {
-    const file = realpathSync(env.MM_ADMIN_TOKEN_FILE);
-    for (const root of config.uploads.roots) {
-      let canonical;
-      try {
-        canonical = realpathSync(root);
-      } catch (e) {
-        if (e.code === "ENOENT") continue;
-        throw e;
-      }
-      const r = relative(canonical, file);
-      if (r === "" || (r !== ".." && !r.startsWith(".." + sep) && !isAbsolute(r)))
-        throw serviceError("INVALID_SETTINGS");
-    }
-  }
 }
 
 function loadInputs(env) {
   const vars = env.MM_TOKEN_FILE ? { ...env, MM_TOKEN: patFromFile(env) } : env;
   if (env.MM_TOKEN_FILE_LINE && !env.MM_TOKEN_FILE) throw serviceError("INVALID_SETTINGS");
-  const config = resolveConfig(vars),
+  const targets = callbackTargets(env);
+  const config = resolveConfig(vars, targets.secretFiles),
     http = httpSettings(env);
-  validateSecrets(config, http, env);
+  validateSecrets(config, http);
   return {
     config,
     stateDir:
@@ -64,7 +48,7 @@ function loadInputs(env) {
       join(env.XDG_STATE_HOME || join(homedir(), ".local", "state"), "mattermost-mcp"),
     http,
     defaults: bootstrapSettings(config, http, env),
-    targets: callbackTargets(env),
+    targets,
   };
 }
 
