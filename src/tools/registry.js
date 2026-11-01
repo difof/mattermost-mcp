@@ -9,6 +9,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { formatMattermostError } from "../mattermost/errors.js";
 import { GuardrailError, assertWriteAllowed, assertMessageWithinLimit } from "../guardrails.js";
+import { combineSignals, withRequestSignal } from "../mattermost/request-signal.js";
 import { ResourceGuard } from "../resource-guardrails.js";
 const text = (body, isError = false) => ({
   content: [{ type: "text", text: body }],
@@ -72,12 +73,17 @@ export async function dispatchToolCall(tools, ctx, name, rawArgs) {
     const resources = new ResourceGuard(ctx.session);
     if (tool.resources) await resources.assertResources(tool.resources(args));
     const result = await tool.handler(args, { ...ctx, resources });
-    return text(
-      formatResult(
-        tool.resultScope ? await resources.filterResult(tool.resultScope, result) : result,
-        tool.compact,
-      ),
+    const encoded = formatResult(
+      tool.resultScope ? await resources.filterResult(tool.resultScope, result) : result,
+      tool.compact || Boolean(ctx.exchange),
     );
+    if (ctx.exchange && Buffer.byteLength(encoded) > ctx.exchange.outputLimit) {
+      return text(
+        "Operation finished but its result is too large. Use a smaller page or filter; do not repeat a mutation.",
+        true,
+      );
+    }
+    return text(encoded);
   } catch (err) {
     if (err instanceof GuardrailError) return text(err.message, true);
     // Surface Mattermost API errors verbatim; never swallow.
@@ -87,11 +93,33 @@ export async function dispatchToolCall(tools, ctx, name, rawArgs) {
 /** Wire tools/list and tools/call onto a low-level MCP Server. */
 export function registerTools(server, tools, ctx) {
   server.setRequestHandler(ListToolsRequestSchema, () => buildToolList(tools));
-  server.setRequestHandler(CallToolRequestSchema, ({ params }) => {
+  server.setRequestHandler(CallToolRequestSchema, ({ params }, extra) => {
     // A routing hint for this one call, never an identity attached to the shared account.
     const hint = params._meta?.["ai.opencode/sessionID"];
     const callerSessionId =
       typeof hint === "string" && /^ses_[A-Za-z0-9]{1,100}$/.test(hint) ? hint : undefined;
-    return dispatchToolCall(tools, { ...ctx, callerSessionId }, params.name, params.arguments);
+    const signal = combineSignals(ctx.exchange?.signal, extra?.signal);
+    // Limit cancellation to operations performed on this caller's behalf.
+    // Background subscriptions and shared listener/refresh tasks keep their own lifetime.
+    const session = Object.create(ctx.session);
+    session.call = (fn) =>
+      withRequestSignal(signal, () => {
+        signal?.throwIfAborted();
+        return ctx.session.call(fn);
+      });
+    const run = () =>
+      dispatchToolCall(
+        tools,
+        { ...ctx, session, signal, callerSessionId },
+        params.name,
+        params.arguments,
+      );
+    if (!ctx.exchange) return run();
+    return ctx.exchange.track(async () => {
+      const reply = await run();
+      if (reply.isError && Buffer.byteLength(reply.content[0].text) > ctx.exchange.outputLimit)
+        return text("The error response exceeds the service limit.", true);
+      return reply;
+    });
   });
 }
