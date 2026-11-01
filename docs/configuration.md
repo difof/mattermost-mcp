@@ -8,14 +8,15 @@ Run `npm link` in the built checkout for the `mattermost-mcp` command, or replac
 `node /absolute/path/to/mattermost-mcp/dist/index.js`. The same binary starts the MCP server and
 provides these management commands:
 
-| Command                         | Description                                                             |
-| ------------------------------- | ----------------------------------------------------------------------- |
-| `mattermost-mcp`                | Start the MCP server on stdio (default — this is what MCP clients run). |
-| `mattermost-mcp login`          | Interactive auth wizard; validates and saves credentials.               |
-| `mattermost-mcp login --gitlab` | Browser SSO login (GitLab/SAML) — no admin or PAT required.             |
-| `mattermost-mcp status`         | Authenticate with the resolved config and print the current identity.   |
-| `mattermost-mcp logout`         | Remove saved credentials (and the matching OAuth token cache).          |
-| `mattermost-mcp --help`         | Usage. `--version` prints the version.                                  |
+| Command                         | Description                                                                   |
+| ------------------------------- | ----------------------------------------------------------------------------- |
+| `mattermost-mcp`                | Start the MCP server on stdio (default — this is what MCP clients run).       |
+| `mattermost-mcp serve`          | Run the [shared HTTP service and optional event listener](shared-service.md). |
+| `mattermost-mcp login`          | Interactive auth wizard; validates and saves credentials.                     |
+| `mattermost-mcp login --gitlab` | Browser SSO login (GitLab/SAML) — no admin or PAT required.                   |
+| `mattermost-mcp status`         | Authenticate with the resolved config and print the current identity.         |
+| `mattermost-mcp logout`         | Remove saved credentials (and the matching OAuth token cache).                |
+| `mattermost-mcp --help`         | Usage. `--version` prints the version.                                        |
 
 ## Authenticate with `login`
 
