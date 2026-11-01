@@ -4,6 +4,8 @@ import { resolveConfig } from "./credentials.js";
 import { createSession } from "./mattermost/client.js";
 import { registerTools } from "./tools/registry.js";
 import { allTools } from "./tools/index.js";
+import { cachedMessagesTool } from "./tools/cached-messages.js";
+import { subscriptionTools } from "./tools/subscriptions.js";
 import { log } from "./log.js";
 import { VERSION } from "./version.js";
 /** Each transport owns its MCP protocol state; the authenticated account can be shared. */
@@ -13,7 +15,8 @@ export function makeMcpServer(session) {
     { capabilities: { tools: {} } },
   );
   // tools/list + tools/call dispatched from the registry, sharing the session.
-  registerTools(server, allTools, { session });
+  const tools = session.cache ? [...allTools, cachedMessagesTool, ...subscriptionTools] : allTools;
+  registerTools(server, tools, { session });
   return server;
 }
 export async function runServer() {
