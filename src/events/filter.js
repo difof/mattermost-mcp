@@ -1,20 +1,7 @@
+import { hasPersonalMention } from "./mentions.js";
+
 const mattermostId = /^[a-z0-9]{26}$/;
 export const isMattermostId = (value) => typeof value === "string" && mattermostId.test(value);
-
-function hasPersonalMention(message, username) {
-  // Count an explicit personal handle, excluding code, link targets, URLs and email-like text.
-  if (!/[@＠]/.test(message)) return false;
-  const prose = message
-    .replace(/^ {0,3}`{3,}[^\n]*\n[\s\S]*?(?:^ {0,3}`{3,}[^\n]*$|(?![\s\S]))/gm, " ")
-    .replace(/^ {0,3}~{3,}[^\n]*\n[\s\S]*?(?:^ {0,3}~{3,}[^\n]*$|(?![\s\S]))/gm, " ")
-    .replace(/(`+)[\s\S]*?\1/g, " ")
-    .replace(/\]\([^\n)]*\)|https?:\/\/[^\s<>]+/gi, " ");
-  const handle = username.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(
-    `(?<![\\p{L}\\p{N}_@＠/\\\\])[@＠]${handle}(?![a-z0-9_-]|\\.[a-z0-9_-])`,
-    "iu",
-  ).test(prose);
-}
 
 export const allowedChannelTypes = new Set(["D", "G", "O", "P"]);
 
