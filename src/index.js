@@ -10,6 +10,8 @@ Usage:
   mattermost-mcp serve         Run the shared loopback HTTP MCP service
   mattermost-mcp login         Authenticate and save credentials to the config dir
   mattermost-mcp login --gitlab  Log in through a browser SSO window (GitLab/SAML; no admin needed)
+  mattermost-mcp prune-cache --state-dir DIR --scope HASH --retention-hours N
+                               Prune expired records in one offline SQLite scope
   mattermost-mcp status        Show the current identity and server
   mattermost-mcp logout        Remove saved credentials
   mattermost-mcp --help        Show this help
@@ -28,6 +30,9 @@ async function main() {
     case "serve":
       if (process.argv.length !== 3) throw new Error("Usage: mattermost-mcp serve");
       await (await import("./commands/serve.js")).runServe();
+      return;
+    case "prune-cache":
+      (await import("./commands/prune-cache.js")).runPruneCache(process.argv.slice(3));
       return;
     case "login":
       await (await import("./commands/login.js")).runLogin(process.argv.slice(3));
