@@ -37,6 +37,10 @@ connection. Read only the reference relevant to the task:
 6. Report what was read or changed, where, and any failed or incomplete scope. Keep message/post
    IDs needed for follow-up. A capped sample is not a complete conversation or time-range audit.
 
+## Pull messages or wait for a reply
+
+For recent messages, discover `list_cached_messages` and combine the smallest useful filters: `direction`, `channel_type`, exact `sender_id` or `channel_id`, and `is_mention`. This service-only cache covers the last 48 hours; use Mattermost history for older messages. For “let me know when…”, use `subscribe_messages` with a finite `ttl_seconds` and the same filters. OpenCode can use its current session automatically. Do not select another active session or create a permanent inbox. Save the returned subscription ID and cancel it when no longer needed. Read [the OpenCode recipe](references/opencode.md#wait-for-a-specific-message) for examples.
+
 ## Match the result contract
 
 Convenience tools return the resource itself after MCP decoding. `api_call` instead returns
