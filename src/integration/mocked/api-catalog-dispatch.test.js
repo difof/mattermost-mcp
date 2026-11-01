@@ -162,7 +162,10 @@ function assertReferenceClosure(description) {
 }
 
 describe("complete pinned API catalog dispatch through MCP and HTTP", () => {
-  const fixture = useMattermost({ guardrails: { allowDestructive: true } });
+  const fixture = useMattermost({
+    guardrails: { allowDestructive: true },
+    allowSensitiveReads: true,
+  });
 
   it("matches every independently inventoried route and its authentication boundary", () => {
     expect(catalog.version).toBe("11.11.1");
