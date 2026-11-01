@@ -1,5 +1,10 @@
 # @bryanberger/mattermost-mcp
 
+## 0.7.0 (fork)
+
+- Replace the automatic OpenCode inbox with a private rolling 48-hour SQLite cache for incoming and outgoing messages across joined conversations. Cache reads support combined filters and pagination.
+- Add opt-in, expiring callback subscriptions for an OpenCode session or an explicitly allowed webhook. Nothing is delivered without a registration. See [examples and upgrade notes](docs/shared-service.md#pull-or-subscribe).
+
 ## 0.6.0 (fork)
 
 - Share one Mattermost account across local MCP clients with the authenticated HTTP
