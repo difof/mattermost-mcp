@@ -124,6 +124,7 @@ export async function captureSessionToken(url, timeoutMs = CAPTURE_TIMEOUT_MS) {
   log(`launching browser: ${executablePath}`);
   const browser = await puppeteer.launch({
     headless: false,
+    pipe: true,
     executablePath,
     defaultViewport: null,
     args: ["--no-first-run", "--no-default-browser-check"],
