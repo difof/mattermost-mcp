@@ -1,0 +1,15 @@
+[Unit]
+Description=Shared Mattermost MCP and optional incoming event listener
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/mattermost-mcp/service.env
+ExecStart=%h/.local/bin/mattermost-mcp serve
+Restart=on-failure
+RestartSec=8
+TimeoutStopSec=45
+UMask=0077
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target
