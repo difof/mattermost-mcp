@@ -5,6 +5,8 @@
 Legend: ⚠️ = write (blocked by `MM_READ_ONLY=true`) · 💥 = destructive (requires
 `MM_ALLOW_DESTRUCTIVE=true` **and** `confirm: true` per call)
 
+For service management use the [separate admin catalog](admin-settings.md): `list_settings`, `set_settings`, `reload_settings`. They are not ordinary Mattermost tools.
+
 ## Arguments and errors
 
 Use argument names exactly as advertised by `tools/list`. Extra argument names are rejected;
