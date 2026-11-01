@@ -8,7 +8,7 @@ import { startListener } from "./listener.js";
 const channel = "c".repeat(26);
 vi.mock("./listener.js", () => ({ startListener: vi.fn(() => async () => {}) }));
 vi.mock("./cache-access.js", () => ({
-  cacheAccess: async () => ({ check: async () => {}, allows: (id) => id === channel }),
+  cacheAccess: async () => ({ check: async () => {}, decision: (id) => id === channel }),
 }));
 
 function targets(token, paths) {
