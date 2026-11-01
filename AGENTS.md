@@ -12,12 +12,13 @@ keep conversation workflows and host-specific Code Mode recipes there.
 | Location                                                                     | Responsibility                                                                                                                    |
 | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | `src/index.js`, `src/commands/`, `src/server.js`                             | Lazy CLI dispatch, login/status/logout, MCP bootstrap                                                                             |
+| `src/http/`, `src/service/`, `src/events/`                                   | HTTP transport, settings and session changes, SQLite cache and event recovery                                                     |
 | `src/tools/`                                                                 | Domain tool definitions; `index.js` aggregates domain arrays; `registry.js` validates, guards, dispatches and formats MCP results |
 | `src/mattermost/`                                                            | Client4 sessions, authentication, request resilience, bounded HTTP/file transport and CLI browser SSO                             |
 | `src/config.js`, `src/credentials.js`, `src/private-json.js`, `src/paths.js` | Configuration, saved-login resolution, atomic private persistence and storage paths                                               |
 | `src/guardrails.js`, `src/resource-guardrails.js`                            | Pure policy checks, indirect resource resolution, per-call caches and result filtering                                            |
 | `src/api/`                                                                   | Operation discovery/policy, request serialization, execution and generated `catalog.json`                                         |
-| `scripts/`                                                                   | Copy-only build, pinned source verification, coverage audit and catalog generation                                                |
+| `scripts/`                                                                   | Build, source audit/catalog generation, portable unit installation and repository checks                                          |
 
 ## Implementation rules
 
@@ -68,6 +69,7 @@ WebSocket events are separate from the REST executor; see [the shared service](d
 
 ## Verification and delivery
 
+- Run `node scripts/check-portability.mjs` on tracked files before publishing. Keep operator paths, account names, credential files and SQLite state out of examples, tests and commits.
 - Install locked dependencies with `npm ci`. Use `npm run lint` for ESLint/Prettier,
   `npx --no-install vitest run <test-file>` for focused tests, `npm run test:mocks` for MCP-to-HTTP
   contracts, and `npm test` for the full suite. CI runs install, lint, tests and build on Node 24.
