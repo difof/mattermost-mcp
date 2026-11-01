@@ -37,9 +37,6 @@ const EXTRA_SOURCES = {
 const digest = (data) => createHash("sha256").update(data).digest("hex");
 const sortedEntries = (object) =>
   Object.entries(object).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-const isSourceFile = (name) =>
-  name.endsWith(".yaml") || (name.endsWith(".go") && !name.endsWith("_test.go"));
-
 export function sourceHashes(files) {
   return Object.fromEntries(sortedEntries(files).map(([name, data]) => [name, digest(data)]));
 }
@@ -77,42 +74,33 @@ async function request(url) {
   return Buffer.from(await response.arrayBuffer());
 }
 
-async function downloadSource(cache) {
-  const entries = [];
-  for (const directory of SOURCE_DIRS) {
-    const url = `https://api.github.com/repos/mattermost/mattermost/contents/${directory}?ref=${COMMIT}`;
-    for (const entry of JSON.parse((await request(url)).toString("utf8"))) {
-      if (entry.type === "file" && isSourceFile(entry.name)) entries.push(entry);
+// Fetch only files named by the independently pinned SHA-256 manifest. A
+// remote directory listing must not decide what is trusted or written locally.
+async function sourceSet(directory, manifest, download) {
+  const entries = Object.entries(manifest),
+    result = new Array(entries.length);
+  let next = 0;
+  async function worker() {
+    while (next < entries.length) {
+      const i = next++,
+        [name, expected] = entries[i],
+        path = join(directory, name);
+      let data = existsSync(path) ? readFileSync(path) : null;
+      if ((!data || digest(data) !== expected) && download) {
+        data = await request(
+          `https://raw.githubusercontent.com/mattermost/mattermost/${COMMIT}/${name}`,
+        );
+        if (digest(data) !== expected) throw new Error(`Source hash mismatch: ${name}`);
+        mkdirSync(dirname(path), { recursive: true });
+        writeFileSync(path, data);
+      }
+      if (!data || digest(data) !== expected)
+        throw new Error(`Source hash mismatch or missing file: ${name}`);
+      result[i] = [name, data];
     }
   }
-  const results = new Array(entries.length);
-  let next = 0;
-  // Source downloads are independent; cap concurrency and keep deterministic
-  // ordering regardless of completion order.
-  await Promise.all(
-    Array.from({ length: Math.min(8, entries.length) }, async () => {
-      for (;;) {
-        const index = next++;
-        if (index >= entries.length) return;
-        const entry = entries[index];
-        const target = join(cache, entry.path);
-        let data = existsSync(target) ? readFileSync(target) : Buffer.alloc(0);
-        const correctBlob = (content) =>
-          createHash("sha1").update(`blob ${content.length}\0`).update(content).digest("hex") ===
-          entry.sha;
-        if (!correctBlob(data)) {
-          data = await request(
-            `https://raw.githubusercontent.com/mattermost/mattermost/${COMMIT}/${entry.path}`,
-          );
-          if (!correctBlob(data)) throw new Error(`Git blob mismatch: ${entry.path}`);
-          mkdirSync(dirname(target), { recursive: true });
-          writeFileSync(target, data);
-        }
-        results[index] = [entry.path, data];
-      }
-    }),
-  );
-  return Object.fromEntries(results);
+  await Promise.all(Array.from({ length: Math.min(8, entries.length) }, worker));
+  return Object.fromEntries(result);
 }
 
 function git(source, ...args) {
@@ -132,31 +120,11 @@ export function readSourceCheckout(source, revision, manifest) {
 }
 
 export async function loadSupplementalSource(args) {
-  const directory = args.source ?? args["cached-source"] ?? args.cache;
-  const download = !!args.download;
-  const checkout = !!args.source;
-  if (checkout && git(directory, "status", "--porcelain", "--", ...Object.keys(EXTRA_SOURCES))) {
-    throw new Error("Supplemental source files have checkout changes");
-  }
-  const files = await Promise.all(
-    Object.entries(EXTRA_SOURCES).map(async ([name, expected]) => {
-      const target = join(directory, name);
-      let data = existsSync(target) ? readFileSync(target) : Buffer.alloc(0);
-      if (digest(data) !== expected && download) {
-        data = await request(
-          `https://raw.githubusercontent.com/mattermost/mattermost/${COMMIT}/${name}`,
-        );
-        if (digest(data) === expected) {
-          mkdirSync(dirname(target), { recursive: true });
-          writeFileSync(target, data);
-        }
-      }
-      if (digest(data) !== expected)
-        throw new Error(`Supplemental source hash mismatch or missing file: ${name}`);
-      return [name, data];
-    }),
+  return sourceSet(
+    args.source || args["cached-source"] || args.cache,
+    EXTRA_SOURCES,
+    !!args.download,
   );
-  return Object.fromEntries(files);
 }
 
 export function sourceArguments(extra = {}) {
@@ -183,5 +151,5 @@ export function sourceArguments(extra = {}) {
 export async function loadSource(args) {
   if (args.source) return readSourceCheckout(args.source, COMMIT, pinnedManifest());
   if (args["cached-source"]) return verifiedFiles(args["cached-source"], pinnedManifest());
-  return downloadSource(args.cache);
+  return sourceSet(args.cache, pinnedManifest(), true);
 }
