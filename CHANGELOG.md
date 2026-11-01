@@ -1,5 +1,10 @@
 # @bryanberger/mattermost-mcp
 
+## 0.8.0 (fork)
+
+- Add an opt-in [management MCP](docs/admin-settings.md) for redacted settings inspection, persisted live changes, and reloading operator-owned credential files. Ordinary agents keep their separate bearer and tool catalog.
+- Make cache retention configurable (1–168 hours, default 48). Revalidate credentials and preserve the account, cache and subscriptions across successful reloads.
+
 ## 0.7.0 (fork)
 
 - Replace the automatic OpenCode inbox with a private rolling 48-hour SQLite cache for incoming and outgoing messages across joined conversations. Cache reads support combined filters and pagination.
