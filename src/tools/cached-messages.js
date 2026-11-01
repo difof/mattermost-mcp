@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { listAccessibleChannels } from "../events/api.js";
+import { cacheAccess } from "../events/cache-access.js";
 
 const id = z.string().regex(/^[a-z0-9]{26}$/);
 
@@ -41,7 +41,7 @@ export const cachedMessagesTool = {
   name: "list_cached_messages",
   title: "List recently cached messages",
   description:
-    "Read the local message cache within its configured retention window (default 48 hours), newest first. All supplied filters must match. For DMs from one person, use channel_type D and sender_id; for channel mentions, use is_mention and channel_id. Set direction outgoing for messages sent by this account. Current channel membership and allowlists are checked before each page. Continue with nextCursor and the same filters.",
+    "Read the local message cache within its configured retention window (default 48 hours), newest first. All supplied filters must match. For DMs from one person, use channel_type D and sender_id; for channel mentions, use is_mention and channel_id. Set direction outgoing for messages sent by this account. Channel membership, allowlists and permission to read posts are checked before each page. Continue with nextCursor and the same filters.",
   inputSchema: z
     .object({
       ...cacheFilterShape,
@@ -63,16 +63,23 @@ export const cachedMessagesTool = {
     .strict(),
   compact: true,
   handler: async (args, { session }) => {
-    // Recheck once per page, fail closed on upstream errors, and forget content
-    // we can no longer access (including public channels the account has left).
-    const channels = await listAccessibleChannels(session);
-    session.cache.retainChannels(channels.keys());
-    if (args.channel_id && !channels.has(args.channel_id)) {
-      throw new Error("Channel is not an accessible joined channel");
+    const cache = session.cache;
+    const access = await cacheAccess(session, cache);
+    if (args.channel_id) {
+      await access.check([args.channel_id]);
+      if (!access.allows(args.channel_id))
+        throw new Error("Channel is not an accessible joined channel");
     }
-    return {
-      ...session.cache.list({ ...toCacheFilters(args), cursor: args.cursor, limit: args.limit }),
-      syncState: session.cacheStatus,
-    };
+    const filters = { ...toCacheFilters(args), cursor: args.cursor, limit: args.limit };
+    // A purge or a live post during a check can move unverified channels onto the
+    // page. Only return a freshly read page (including its cursor) that passed.
+    for (let checks = 0; ; checks++) {
+      const page = cache.list(filters);
+      const ids = page.messages.map((row) => row.channelId);
+      if (ids.every(access.allows)) return { ...page, syncState: session.cacheStatus };
+      if (checks === 3)
+        throw new Error("The cache page changed during access checks; retry this pull");
+      await access.check(ids);
+    }
   },
 };
