@@ -1,7 +1,20 @@
-import { mkdir, mkdtemp, rm, symlink, truncate, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  link,
+  mkdir,
+  mkdtemp,
+  rename,
+  rm,
+  symlink,
+  truncate,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { resolveConfig } from "../credentials.js";
+import { inheritUploadProtection } from "./upload-access.js";
+import { readInputs } from "../service/inputs.js";
 import { createUploadReader } from "./uploads.js";
 
 describe("upload sources", () => {
@@ -24,6 +37,62 @@ describe("upload sources", () => {
     await writeFile(path, bytes);
     return path;
   };
+
+  it("rejects secret and private-state overlaps before starting either transport", async () => {
+    const pat = await file(join(root, "pat"), "fixture-pat");
+    const env = {
+      MM_URL: "https://fixture.invalid",
+      MM_TOKEN: "fixture",
+      MM_UPLOAD_ROOTS: JSON.stringify([root]),
+      MM_HTTP_TOKEN: "a".repeat(40),
+    };
+    expect(() => resolveConfig({ ...env, MM_TOKEN_FILE: pat })).toThrow(/separate from private/);
+    expect(() =>
+      resolveConfig({ ...env, MM_EVENTS_STATE_DIR: join(root, "future-cache") }),
+    ).toThrow(/separate from private/);
+    const callbackFile = join(outside, "callbacks.json");
+    await writeFile(
+      callbackFile,
+      JSON.stringify([{ url: "https://fixture.invalid/notify", bearer_file: pat }]),
+      { mode: 0o600 },
+    );
+    await chmod(pat, 0o600);
+    expect(() => readInputs({ ...env, MM_CALLBACK_TARGETS_FILE: callbackFile })).toThrow(
+      /separate from private/,
+    );
+    expect(() =>
+      resolveConfig({ ...env, MM_UPLOAD_ROOTS: JSON.stringify([join(root, "not-yet-created")]) }),
+    ).toThrow(/existing MM_UPLOAD_ROOTS/);
+  });
+  it("rejects hard-link aliases and root replacement after startup", async () => {
+    const admin = await file(join(outside, "admin"), "dummy admin marker");
+    const cfg = resolveConfig({
+      MM_URL: "https://fixture.invalid",
+      MM_TOKEN: "fixture",
+      MM_UPLOAD_ROOTS: JSON.stringify([root]),
+      MM_ADMIN_TOKEN_FILE: admin,
+    });
+    const read = createUploadReader(cfg.uploads);
+    const alias = join(root, "alias");
+    await link(admin, alias);
+    await expect(read({ file_path: alias })).rejects.toThrow(/private|hard-linked/);
+    // Even if the original secret has been removed, the pinned identity stays private.
+    await rm(admin);
+    await expect(read({ file_path: alias })).rejects.toThrow(/private/);
+    await file(admin, "rotated marker");
+    const next = resolveConfig({
+      MM_URL: "https://fixture.invalid",
+      MM_TOKEN: "fixture",
+      MM_UPLOAD_ROOTS: JSON.stringify([root]),
+      MM_ADMIN_TOKEN_FILE: admin,
+    });
+    inheritUploadProtection(cfg.uploads.access, next.uploads.access);
+    await expect(createUploadReader(next.uploads)({ file_path: alias })).rejects.toThrow(/private/);
+    await rename(root, root + "-old");
+    await mkdir(root);
+    const file_path = await file(join(root, "fresh"), "new unapproved directory");
+    await expect(read({ file_path })).rejects.toThrow(/permitted upload roots/);
+  });
 
   it("accepts inline binary and empty content without requiring a filename", async () => {
     const read = createUploadReader();
