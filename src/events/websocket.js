@@ -98,7 +98,7 @@ function receive(socket, userId, push, fail, invalidate) {
           invalidate(item.revoked);
           return;
         }
-        if (item?.type === "directory") invalidate();
+        if (item?.type === "directory") invalidate(undefined, true);
         if (item) push(item);
       }
     } catch {
