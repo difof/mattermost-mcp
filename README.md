@@ -1,7 +1,7 @@
 # mattermost-mcp
 
 Use your Mattermost account from an MCP agent: read conversations, send DMs and replies,
-manage channels, and work with files. **37 tools**, native JavaScript, stdio transport, Node.js 20+.
+manage channels, and work with files. **37 tools**, native JavaScript, stdio or shared Streamable HTTP, Node.js 20+.
 
 This is [difof's fork](https://github.com/difof/mattermost-mcp) of
 [BryanBerger98/mattermost-mcp](https://github.com/BryanBerger98/mattermost-mcp), with fixes for
@@ -39,6 +39,8 @@ The process uses the saved login. For environment-based credentials, see
 [the example configuration](examples/mcp.json). Run `node dist/index.js logout` to remove the login.
 
 **Install this fork from source.** The upstream npm package does not include this fork's changes.
+
+For multiple local harnesses, run one [shared HTTP service](docs/shared-service.md). It can also listen for incoming DMs and personal mentions and wake a dedicated OpenCode inbox.
 
 ## Agent skill
 
