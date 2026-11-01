@@ -6,6 +6,9 @@ import { readFileSync, rmSync } from "node:fs";
 import { z } from "zod";
 import { credentialsFile } from "./paths.js";
 import { loadConfig, ServerUrlSchema, OAuthRedirectSchema } from "./config.js";
+import { tokenCacheFile } from "./mattermost/oauth.js";
+import { protectUploadRoots } from "./mattermost/upload-access.js";
+import { callbackTargets } from "./events/callbacks.js";
 import { writePrivateJson } from "./private-json.js";
 const StoredAuthSchema = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("pat"), token: z.string().min(1) }),
@@ -64,7 +67,7 @@ export function credentialsToEnv(creds) {
  * server: never send saved tokens or client secrets to a different destination.
  * Throws like loadConfig when neither source yields a valid configuration.
  */
-export function resolveConfig(env = process.env) {
+export function resolveConfig(env = process.env, callbackFiles) {
   const stored = readCredentials();
   const explicit = Object.fromEntries(
     Object.entries(env).filter(([, value]) => value !== undefined && value !== ""),
@@ -72,5 +75,24 @@ export function resolveConfig(env = process.env) {
   const target = explicit.MM_URL ? ServerUrlSchema.safeParse(explicit.MM_URL) : null;
   const useStored = stored && (!target || (target.success && target.data === stored.url));
   const base = useStored ? credentialsToEnv(stored) : {};
-  return loadConfig({ ...base, ...explicit });
+  const config = loadConfig({ ...base, ...explicit });
+  if (config.uploads.roots.length) {
+    try {
+      const files = [
+        ...(callbackFiles ??
+          (env.MM_CALLBACK_TARGETS_FILE ? callbackTargets(env).secretFiles : [])),
+      ];
+      if (config.auth.mode === "oauth2")
+        files.push(tokenCacheFile(config.url, config.auth.clientId));
+      config.uploads.access = protectUploadRoots(config.uploads.roots, env, files);
+    } catch {
+      throw Object.assign(
+        new Error(
+          "Use existing MM_UPLOAD_ROOTS directories separate from private credentials and state",
+        ),
+        { code: "INVALID_SETTINGS" },
+      );
+    }
+  }
+  return config;
 }
