@@ -57,7 +57,7 @@ async function fixture() {
   const { directory, targets } = config(),
     file = join(directory, "messages.db");
   let cache, leases;
-  const authorize = vi.fn(async () => {});
+  const authorize = vi.fn(async (ids) => (id) => ids.includes(id));
   async function close() {
     await leases?.stop();
     leases = undefined;
@@ -150,6 +150,25 @@ it("keeps per-lease progress across restart and retries an uncertain callback wi
   expect(a[1]).toEqual(a[0]);
   expect(b).toHaveLength(1);
   expect(a[0].key).not.toBe(b[0].key);
+});
+it("does not send a different channel's candidate discovered after an authorization purge", async () => {
+  const h = await fixture();
+  const send = vi.fn(async () => new Response(null, { status: 204 }));
+  vi.stubGlobal("fetch", send);
+  h.authorize.mockImplementationOnce(async (ids) => {
+    h.cache.purgeChannel(id(111));
+    return (channel) => ids.includes(channel);
+  });
+  h.leases.register({ callback_url: hookA, ttl_seconds: 30 }, {});
+  h.cache.applyBatch([post(31), post(32, { channelId: id(333) })]);
+  h.leases.wake();
+  await vi.advanceTimersByTimeAsync(80);
+  expect(send).not.toHaveBeenCalled();
+  expect(h.authorize.mock.calls[0][0]).toEqual([id(111)]);
+  await vi.advanceTimersByTimeAsync(1020);
+  expect(h.authorize.mock.calls[1][0]).toEqual([id(333)]);
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(send.mock.calls[0][1].body).postId).toBe(id(32));
 });
 it("aborts an in-flight callback on unsubscribe and sends no subsequent post", async () => {
   const h = await fixture(),
