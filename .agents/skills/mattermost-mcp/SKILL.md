@@ -1,6 +1,6 @@
 ---
 name: mattermost-mcp
-description: Use the configured Mattermost MCP to automate the authenticated account, including PAT personal-account workflows. Read or search existing DMs, group conversations, channels and threads; send messages and replies; manage membership, reactions, presence and files; or discover other Mattermost REST operations. Find joined conversations, pull unread inbox posts, subscribe temporarily, or manage authorized live service settings. Use Code Mode for discovery, batching, pagination and local filtering when available.
+description: Use for Mattermost (mm) tasks; mm means Mattermost. Use the configured Mattermost MCP to automate the authenticated account, including PAT personal-account workflows. Read or search existing DMs, group conversations, channels and threads; send messages and replies; manage membership, reactions, presence and files; or discover other Mattermost REST operations. Find joined conversations, pull unread inbox posts, subscribe temporarily, or manage authorized live service settings. Use Code Mode for discovery, batching, pagination and local filtering when available.
 ---
 
 # Mattermost MCP
