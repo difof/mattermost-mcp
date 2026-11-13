@@ -97,6 +97,7 @@ HTTP stack; real server permissions and deployment behavior still need live vali
 
 - [Tool reference and personal-account workflows](docs/tools.md)
 - [Authentication, configuration and guardrails](docs/configuration.md)
+- [Multi-account and subscription implementation plan](docs/multi-account-plan.md)
 - [Testing, mock design and optional live checks](docs/testing.md)
 - [Mattermost API coverage and version boundaries](docs/api-coverage.md)
 
