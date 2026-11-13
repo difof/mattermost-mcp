@@ -1,5 +1,13 @@
 import { afterEach, expect, it } from "vitest";
-import { mkdtempSync, statSync, rmSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  statSync,
+  rmSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+  chmodSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openCache, RETENTION_MS } from "./cache.js";
@@ -194,6 +202,8 @@ it("refuses an unsafe existing database or symlink instead of using it", async (
   dirs.push(root);
   const other = join(root, "other");
   writeFileSync(other, "not a database", { mode: 0o644 });
+  // Set the unsafe mode explicitly; a restrictive umask removes these bits on creation.
+  chmodSync(other, 0o644);
   await expect(openCache(other)).rejects.toThrow("owner-only");
   const link = join(root, "link");
   symlinkSync(other, link);
