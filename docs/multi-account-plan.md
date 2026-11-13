@@ -12,10 +12,10 @@ sending/receiving messages, account-specific caches, and opt-in event delivery t
 OpenCode sessions. An agent can subscribe its current session to every incoming DM for one
 account and resume when a matching event arrives.
 
-Sender-dependent decisions belong to that OpenCode session's instructions. Deliver verified
-sender/account IDs; do not hardcode company hierarchy, execute business workflows, or infer
-authority from display names. Keep native JavaScript ESM and `node:sqlite`; the conditional
-GoJet request does not apply. No language rewrite, extra broker, or workflow framework.
+Sender-dependent decisions and enforceable business permissions belong to the consuming
+application, which may use an OpenCode session. Deliver verified sender/account IDs; do not
+hardcode company hierarchy, execute business workflows, or infer authority from display names.
+Keep native JavaScript ESM and `node:sqlite`; the conditional GoJet request does not apply. No language rewrite, extra broker, or workflow framework.
 
 ## P0 — establish the baseline
 
@@ -124,6 +124,38 @@ A receipt proves admission, not completed agent work or exactly-once external si
 Queue into busy sessions; do not interrupt them or wait for an idle poll. Never select an
 unrelated session. Callback text must specify the same account for subsequent tool calls.
 
+### Consumer templates and conversation transport
+
+Keep application authorization, model selection, personality, caching and approval decisions
+outside this broker. An operator-configured authenticated webhook consumer may admit work
+before creating an agent session; preserve direct OpenCode delivery for existing subscriptions.
+
+- Add small admin-managed Mustache templates for notification text, stored/versioned with
+  authoritative configuration. A subscription selects a template; retain the current built-in
+  format as the compatibility default. Render from plain data without lambdas or dynamic
+  template loading; reject missing required fields and bound rendered size.
+- Construct trusted account/sender/channel/post/event/delivery metadata separately with a JSON
+  serializer. Templates cannot override identity, routing or authorization metadata. Message
+  text is untrusted data, never a template or a second rendering pass; HTML escaping is not
+  prompt-injection protection.
+- Pin the template revision and source event for pending delivery. Retries with the same
+  delivery ID must preserve payload semantics after a template edit. Keep target allowlists,
+  authentication, deadlines and no-redirect behavior.
+- For consumers requiring durable admission, specify a receipt containing the expected
+  delivery ID after the receiver persists it. Preserve legacy webhook acknowledgment behavior
+  explicitly; do not silently impose a new receipt contract on existing registrations.
+- Add a narrow account-aware typing operation using the existing publish-typing API. Resolve
+  the user from the selected account and enforce channel membership, resource allowlists and
+  write guards. The consumer owns short active-work pulses; never queue/replay stale typing
+  after reconnect. Do not disable generic-API safeguards to enable this operation.
+- Reuse custom post properties for interactive messages. Fill only actual gaps for guarded
+  interactive-post/dialog transport; preserve real trigger IDs and verified callback context.
+  User-specific approval decisions, one-use approval records and callback authentication
+  belong to the consumer. Workers must not gain owner credentials through these interfaces.
+- Emit correlated, redacted delivery/render/typing diagnostics with bounded body retention
+  (48 hours by default). Do not log credentials or action secrets. Broker retention does not
+  automatically delete consumer or agent-session logs.
+
 ### Subscription lifetime and outgoing origin
 
 Add an explicit permanent mode, mutually exclusive with `ttl_seconds`. Permanent subscriptions
@@ -142,7 +174,8 @@ subscribe_messages({
 });
 ```
 
-No sender filter means any sender. The session decides what to do for each verified sender.
+No sender filter means any sender. The configured consumer decides what to do for each verified
+sender; registration and successful delivery do not authorize the sender's requested action.
 
 Record known service send intents/receipts, sending account and available caller/correlation
 context. Do not trust arbitrary post properties as proof of origin. By default, new subscriptions
@@ -172,7 +205,8 @@ unreviewed assumption merely because their checkbox exists.
       migration, transactional application and rejection of unsupported future schemas.
 - [ ] Replace inline schema evolution. Design account/scope-qualified keys from the start:
       settings/credentials, accounts/scopes, posts/directory/recovery, inbox receipts,
-      events/send receipts, subscriptions/deliveries. Do not duplicate an existing responsibility.
+      events/send receipts, subscriptions/deliveries and template revisions. Do not duplicate an
+      existing responsibility.
 - [ ] Import legacy environment/settings/login and known cache scopes through an explicit,
       idempotent migration path. Preserve post ordering/readCount,
       subscription IDs/filters/start/expiry/retries and uncertain delivery identities. If legacy
@@ -209,8 +243,10 @@ intact; disabling one stops its workers without resetting the other.
       and indirect resource lookup; reject unknown/ambiguous/disabled selectors before I/O.
 - [ ] Return account context in discovery, cache and event results while preserving documented
       response compatibility where possible. Keep tool schemas compact and strict.
-- [ ] Update tool docs and the repository's agent skill with account selection and the exact
-      subscribe-current-session workflow.
+- [ ] Add guarded typing and document existing interactive-post properties/dialog operations;
+      add convenience transport only for verified gaps, preserving account/resource guards.
+- [ ] Update tool docs and the repository's agent skill with account selection, typing and the
+      exact subscribe-current-session or authenticated-consumer workflow.
 
 **Done:** concurrent calls cannot cross tokens, scopes, policies, cursors or receipts; one-account
 compatibility is explicit and tested.
@@ -240,19 +276,26 @@ and all later expected delivery counts.
       Add permanent mode, renew/list/cancel and explicit failure visibility.
 - [ ] Preserve caller metadata attachment and approved destination validation. Include account
       identity in callback metadata and subsequent-tool instructions.
+- [ ] Add validated template selection/versioning and explicit authenticated consumer targets.
+      Preserve trusted metadata independently of text and pin pending payload semantics.
+- [ ] Define opt-in durable webhook receipts and legacy compatibility; retry the same ID after
+      uncertain admission. The receiver, not this broker, owns job authorization/execution.
 - [ ] Persist pending IDs before sending; acknowledge only a verified receipt. Classify network,
       auth, missing session, refusal and malformed receipt failures without leaking content.
 - [ ] Define pause/terminal/retry behavior for disabled accounts, removed targets, deleted sessions,
       expired data and cancellation. One failed destination must not stall unrelated subscriptions.
 
 **Done:** restart/lost-response retries preserve identity; wrong receipts do not advance cursors;
-permanent registrations survive restart; expiry/unsubscribe stop new deliveries.
+permanent registrations survive restart; expiry/unsubscribe stop new deliveries; template edits
+and consumer restarts preserve the declared receipt/payload contract.
 **Handoff:** actual API, receipt, state transitions and diagnostic fields; revise P6/P7 and docs.
 
 ### P6 — integrated regression gate
 
 - [ ] Extend existing fixtures with distinct account tokens/users rather than duplicating the API
       catalog suite. Run the acceptance matrix below and the existing access/race/cancellation tests.
+- [ ] Cover template metacharacters/missing variables, metadata spoofing, pinned retry payloads,
+      consumer receipts, typing guard failures and secret-free bounded diagnostics.
 - [ ] Run locked install, lint, full offline suite, build and portability in an isolated checkout.
       Keep live integration opt-in; never rebuild the running checkout as a validation shortcut.
 - [ ] Document precisely which guarantees are mock-tested, source-verified or still live-only.
@@ -266,7 +309,8 @@ permanent registrations survive restart; expiry/unsubscribe stop new deliveries.
       version, runtime/build identity, both accounts and MCP client compatibility.
 - [ ] Use two operator-designated test accounts, a dedicated DM and dedicated test sessions.
       Select an existing working model for tests; restrict test-session actions.
-- [ ] Complete live acceptance below, including restart/backfill and temporary callback outage.
+- [ ] Complete live acceptance below, including restart/backfill, temporary callback outage,
+      consumer admission, supported interactive controls and visible typing lifecycle.
       Do not restart the shared OpenCode server just to test the Mattermost broker.
 - [ ] Cancel test registrations, remove only test-created posts/sessions/artifacts, check final
       health/logs, update docs/version metadata as appropriate, commit and leave Git clean.
@@ -287,6 +331,17 @@ failure/restart cases recover, and the plan states any remaining limits.
 | Delivery/lifetime | Caller metadata binding, permanent and timed lifetimes, renewal, unsubscribe, busy session, lost response, wrong receipt, unavailable target, listener restart and backfill; retries retain the same ID and produce one verified input/projection in the intended session. |
 | End-to-end        | Verify persisted event, intended OpenCode receipt, and a later completed assistant acknowledgment independently. Provider/model errors remain distinguishable from broker failure.                                                                                         |
 | Hygiene           | Non-consuming health checks; no real secrets/private bodies/host paths in tracked fixtures; lint/tests/build/portability pass; test-only cleanup verified; final Git state clean.                                                                                          |
+
+### Additional transport acceptance
+
+- Templates: untrusted message text cannot change trusted metadata or execute template logic;
+  missing required variables fail safely; pending retries retain their template/event version.
+- Consumer admission: authentication, duplicate/lost response, wrong delivery receipt, restart
+  and legacy compatibility are verified without creating unintended agent sessions.
+- Conversation tools: typing uses the selected account and permitted channel, respects write
+  guards and is not replayed; interactive props/dialog triggers survive the transport correctly.
+- Diagnostics: correlate delivery and tool failures, redact credentials/action secrets and
+  expire diagnostic bodies independently of durable configuration and active registrations.
 
 ## Mandatory phase handoff and replanning
 
@@ -314,6 +369,7 @@ when later evidence invalidates its contract. Never mark a live check complete f
 
 Status: design only; implementation begins with P0 verification and P1 storage contracts.
 Known dependencies: import legacy JSON settings and scoped caches; make account selection
-explicit; add event kinds, account-qualified callbacks and permanent subscription lifetimes.
+explicit; add event kinds, account-qualified callbacks, permanent subscription lifetimes,
+versioned notification templates, authenticated consumer admission and guarded typing transport.
 Next: finalize the account/scope keys, migration ledger and import fixtures before changing
 persistence. Do not build multi-account workers on the old single-account schema.
