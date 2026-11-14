@@ -1,8 +1,9 @@
 # One service for multiple MCP clients
 
-Run `mattermost-mcp serve` to share one authenticated Mattermost account and its guardrails.
+Run `mattermost-mcp serve` to share authenticated Mattermost accounts and their guardrails.
+See [multi-account configuration](multi-account.md) for account routing, permanent consumer subscriptions and typing.
 It serves stateless Streamable HTTP at `http://127.0.0.1:8766/mcp`. The default CLI still
-speaks stdio. All clients of the shared service get the same account, permissions and
+speaks stdio. All clients of the shared service can select its configured accounts, permissions and
 server-side upload roots: use separate services for distinct trust boundaries.
 
 ## Set up the service
@@ -88,12 +89,12 @@ Every returned inbox post has a shared `readCount`. It starts at zero and includ
 
 The count records newly issued tool results; without a retry key a repeated pull counts again. It does not identify agents, confirm a human saw a post, or change Mattermost unread state. Backfill, directory queries, callbacks and direct Mattermost history tools do not increment it.
 
-| MCP tool                     | Contract                                                                                                                                                                                                                                                                             |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `list_cached_messages`       | Read immediately, newest first. Supply any combination of `channel_type` (D/G/O/P), `channel_id`, `sender_id`, `direction` (incoming/outgoing), `is_mention`, and a `since` creation time in epoch ms. Use `limit` (1–100, default 25) and `cursor` for further pages.               |
-| `subscribe_messages`         | Match **future** posts using the same message filters except `since` and `unread_only`; supply `ttl_seconds` (1–172800). When called from OpenCode, omit the destination to use the caller's session metadata. Otherwise supply one explicit `session_id` or allowed `callback_url`. |
-| `list_message_subscriptions` | List active registrations for this shared account and their expiry times.                                                                                                                                                                                                            |
-| `unsubscribe_messages`       | Pass `subscription_id` to cancel. Already accepted deliveries cannot be recalled.                                                                                                                                                                                                    |
+| MCP tool                     | Contract                                                                                                                                                                                                                                                                                                  |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `list_cached_messages`       | Read immediately, newest first. Supply any combination of `channel_type` (D/G/O/P), `channel_id`, `sender_id`, `direction` (incoming/outgoing), `is_mention`, and a `since` creation time in epoch ms. Use `limit` (1–100, default 25) and `cursor` for further pages.                                    |
+| `subscribe_messages`         | Match **future** posts using the same message filters except `since` and `unread_only`; supply `ttl_seconds` (1–172800) or `persistent:true`. When called from OpenCode, omit the destination to use the caller's session metadata. Otherwise supply one explicit `session_id` or allowed `callback_url`. |
+| `list_message_subscriptions` | List active registrations for the selected account and their expiry times.                                                                                                                                                                                                                                |
+| `unsubscribe_messages`       | Pass `subscription_id` to cancel. Already accepted deliveries cannot be recalled.                                                                                                                                                                                                                         |
 
 For a quick pull of your outgoing messages, call `list_cached_messages({"direction":"outgoing","limit":10})`. For mentions in one channel, combine `is_mention:true`, `direction:"incoming"` and its exact `channel_id`. Use `channel_type:"D"` and a verified `sender_id` for DMs from one person. Filters are ANDed; omit filters to include all qualifying posts. Cache queries return `{messages,nextCursor,syncState}` (a page may be incomplete while initial reconciliation is running) with bounded JSON; fetch the original post if a row reports truncation.
 
