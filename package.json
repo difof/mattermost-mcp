@@ -1,6 +1,6 @@
 {
   "name": "@bryanberger/mattermost-mcp",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "MCP server exposing the Mattermost REST API v4 as tools (self-hosted instances).",
   "type": "module",
   "license": "MIT",
@@ -51,6 +51,7 @@
   "dependencies": {
     "@mattermost/client": "^11.6",
     "@modelcontextprotocol/sdk": "^1.29",
+    "mustache": "4.2.0",
     "puppeteer-core": "^24.43.1",
     "ws": "^8.21.0",
     "zod": "^3.23",
