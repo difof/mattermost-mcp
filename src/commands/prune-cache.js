@@ -116,6 +116,12 @@ export function pruneScope(stateDir, scope, hours, now = Date.now()) {
         : 0;
     const receipts = expired("inbox_receipts"),
       subscriptions = expired("subscriptions");
+    if (objects.has("send_intents"))
+      db.prepare("DELETE FROM send_intents WHERE created<=?").run(cutoff);
+    if (objects.has("pending_callbacks"))
+      db.prepare(
+        "DELETE FROM pending_callbacks WHERE created<=? OR subscription_id NOT IN (SELECT id FROM subscriptions)",
+      ).run(cutoff);
     db.exec("COMMIT");
     return { posts, receipts, subscriptions };
   } finally {
