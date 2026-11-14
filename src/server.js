@@ -1,3 +1,4 @@
+import { accountTools } from "./tools/accounts.js";
 import { inboxStatusTool } from "./tools/inbox-status.js";
 import { resolveConversationTool } from "./tools/resolve-conversation.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -28,7 +29,7 @@ export function makeMcpServer(session, exchange) {
         ...subscriptionTools,
       ]
     : allTools;
-  registerTools(server, tools, { session, exchange });
+  registerTools(server, [...accountTools, ...tools], { session, exchange });
   return server;
 }
 export async function runServer() {
