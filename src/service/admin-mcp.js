@@ -1,3 +1,5 @@
+import { accountAdminTools } from "./account-admin.js";
+import { accountId } from "./account-store.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   ListToolsRequestSchema,
@@ -21,8 +23,8 @@ const definitions = [
     title: "List service settings",
     description:
       "Show effective MCP service settings, revision, reload behavior and credential status. Secret values are never returned.",
-    inputSchema: z.object({}).strict(),
-    run: (manager) => manager.list(),
+    inputSchema: z.object({ account_id: accountId.optional() }).strict(),
+    run: (manager, args) => manager.list(args.account_id),
   },
   {
     name: "set_settings",
@@ -30,8 +32,10 @@ const definitions = [
     write: true,
     description:
       "Validate and persist an allowed settings patch. Apply live settings and report pending restart changes. Do not pass secrets.",
-    inputSchema: z.object({ patch: settingsPatchSchema, expected_revision }).strict(),
-    run: (manager, args) => manager.set(args.patch, args.expected_revision),
+    inputSchema: z
+      .object({ patch: settingsPatchSchema, expected_revision, account_id: accountId.optional() })
+      .strict(),
+    run: (manager, args) => manager.set(args.patch, args.expected_revision, args.account_id),
   },
   {
     name: "reload_settings",
@@ -39,8 +43,8 @@ const definitions = [
     write: true,
     description:
       "Reread configured settings and private credential sources, verify the account, and apply the valid configuration. No secret input is accepted.",
-    inputSchema: z.object({ expected_revision }).strict(),
-    run: (manager, args) => manager.reload(args.expected_revision),
+    inputSchema: z.object({ expected_revision, account_id: accountId.optional() }).strict(),
+    run: (manager, args) => manager.reload(args.expected_revision, args.account_id),
   },
 ];
 
@@ -58,17 +62,18 @@ const safeErrors = new Map(
   }),
 );
 const failure = (text) => ({ isError: true, content: [{ type: "text", text }] });
-const tools = buildToolList(definitions);
 
 /** Separate protocol server: ordinary Mattermost operations never enter this catalog. */
 export function makeAdminMcpServer(manager, exchange) {
+  const available = manager.listAccounts ? [...definitions, ...accountAdminTools] : definitions;
+  const tools = buildToolList(available.map((d) => ({ ...d, accountIndependent: true })));
   const server = new Server(
     { name: "mattermost-mcp-admin", version: VERSION },
     { capabilities: { tools: {} } },
   );
   server.setRequestHandler(ListToolsRequestSchema, () => tools);
   server.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
-    const definition = definitions.find((d) => d.name === params.name);
+    const definition = available.find((d) => d.name === params.name);
     if (!definition) throw new McpError(ErrorCode.InvalidParams, "Unknown management tool");
     const args = definition.inputSchema.safeParse(params.arguments ?? {});
     // In particular, never echo arbitrary keys, values, filesystem errors or upstream auth errors.
