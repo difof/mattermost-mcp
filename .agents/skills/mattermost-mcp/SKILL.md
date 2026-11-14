@@ -1,6 +1,6 @@
 ---
 name: mattermost-mcp
-description: Use for Mattermost (mm) tasks; mm means Mattermost. Use the configured Mattermost MCP to automate the authenticated account, including PAT personal-account workflows. Read or search existing DMs, group conversations, channels and threads; send messages and replies; manage membership, reactions, presence and files; or discover other Mattermost REST operations. Find joined conversations, pull unread inbox posts, subscribe temporarily, or manage authorized live service settings. Use Code Mode for discovery, batching, pagination and local filtering when available.
+description: Use for Mattermost (mm) tasks; mm means Mattermost. Use the configured Mattermost MCP to automate the authenticated account, including PAT personal-account workflows. Read or search existing DMs, group conversations, channels and threads; send messages and replies; manage membership, reactions, presence and files; or discover other Mattermost REST operations. Find joined conversations, pull unread inbox posts, subscribe temporarily or persistently, or manage authorized live service settings. Use Code Mode for discovery, batching, pagination and local filtering when available.
 ---
 
 # Mattermost MCP
@@ -15,7 +15,7 @@ connection. Read only the reference relevant to the task:
 
 ## Working loop
 
-1. Establish the requested people, conversation, time range and effects. Resolve only missing
+1. Call `list_accounts` when account identity is unclear, then pass the selected `account_id` consistently on all account calls. Never substitute another account after a denial or outage. An operator default supports legacy callers; prefer explicit routing. Establish the requested people, conversation, time range and effects. Resolve only missing
    context; do not ask again for authorization already given. Use `get_me` when the authenticated
    identity matters, `get_user` for an exact username, or `search_users` to resolve candidates.
    Never select an ambiguous display-name match or invent an ID.
@@ -47,11 +47,13 @@ For posts no agent has pulled yet, use `list_cached_messages({unread_only:true})
 
 Each newly issued row increments its shared `readCount` (first return: 1). Do not repeatedly poll an unfiltered inbox merely to check status: that counts as reading its rows. This does not mark messages read in Mattermost.
 
-For recent messages, discover `list_cached_messages` and combine the smallest useful filters: `direction`, `channel_type`, exact `sender_id` or `channel_id`, and `is_mention`. The shared service backfills the configured retention window after startup or reconnect (1–168 hours; default 48). Follow `nextCursor`. Check `syncState`: `recovering` is still catching up; `partial` means one or more channel replays failed or a dense timestamp could not be fully verified. Do not report “none” from either; fetch the exact post if known. For temporary access-check errors, retry later. Use Mattermost history for older messages. Deleted or inaccessible posts cannot be recovered. For “let me know when…”, use `subscribe_messages` with a finite `ttl_seconds` and the same filters. OpenCode can use its current session automatically. Do not select another active session or create a permanent inbox. Save the returned subscription ID and cancel it when no longer needed. Read [the OpenCode recipe](references/opencode.md#wait-for-a-specific-message) for examples.
+For recent messages, discover `list_cached_messages` and combine the smallest useful filters: `direction`, `channel_type`, exact `sender_id` or `channel_id`, and `is_mention`. The shared service backfills the configured retention window after startup or reconnect (1–168 hours; default 48). Follow `nextCursor`. Check `syncState`: `recovering` is still catching up; `partial` means one or more channel replays failed or a dense timestamp could not be fully verified. Do not report “none” from either; fetch the exact post if known. For temporary access-check errors, retry later. Use Mattermost history for older messages. Deleted or inaccessible posts cannot be recovered. For “let me know when…”, use `subscribe_messages` with a finite `ttl_seconds` and the same filters. OpenCode can use its current session automatically. Do not select another active session. Use `persistent:true` only for an explicitly requested ongoing listener; otherwise use finite TTL. A generic consumer uses its exact operator-enabled `callback_url`; the broker does not decide its business permissions. Save the returned subscription ID and cancel it when no longer needed. Read [the OpenCode recipe](references/opencode.md#wait-for-a-specific-message) for examples.
 
 ## Manage the shared service
 
-For a request to list or change **MCP service** settings or reload rotated credentials, discover the separately authorized `mattermost_admin` connection in the management workspace. Call `list_settings` first, then `set_settings` with the desired patch and returned revision. For a rotated credential call `reload_settings` after its configured private file has been updated. Never request the secret in chat. Report any pending restart and keep ordinary message tasks on `mattermost`.
+For a request to list or change **MCP service** settings or reload rotated credentials, discover the separately authorized `mattermost_admin` connection in the management workspace. Call `list_settings` first, then `set_settings` with the desired patch and returned revision. For a legacy credential call `reload_settings` after its configured private file has been updated. Multi-account registry credentials use admin `add_account`, `rotate_account` and `update_account` with private source files, explicit account IDs and the returned registry revision. Never request the secret in chat. Report any pending restart and keep ordinary message tasks on `mattermost`.
+
+Use `publish_typing` only during authorized active work, with the same account and channel. Stop pulses while waiting or after completion. Existing `post_message.props` carries interactive controls; the consuming application must authenticate and validate their callbacks.
 
 ## Match the result contract
 
