@@ -79,6 +79,7 @@ export function resolveConfig(env = process.env, callbackFiles) {
   if (config.uploads.roots.length) {
     try {
       const files = [
+        ...(env.MM_PRIVATE_ACCOUNT_FILES ? JSON.parse(env.MM_PRIVATE_ACCOUNT_FILES) : []),
         ...(callbackFiles ??
           (env.MM_CALLBACK_TARGETS_FILE ? callbackTargets(env).secretFiles : [])),
       ];
