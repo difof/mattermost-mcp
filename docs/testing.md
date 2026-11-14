@@ -19,8 +19,8 @@ there is no compiler or custom test resolver.
 
 ## What the API mocks test
 
-The mock suite exercises all **37 core tools**: personal-account workflows through the
-34 convenience tools, plus catalog, transport and policy coverage through the three API tools
+The mock suite exercises the **38 domain tools**: personal-account workflows through the
+35 convenience tools, plus catalog, transport and policy coverage through the three API tools
 for the complete pinned account-compatible HTTP inventory.
 
 The mock suite uses a real MCP client/server pair, the production tool registry, `createSession`,
@@ -121,3 +121,14 @@ That optional case uses `Client4` directly and performs real writes; the tool-la
 `MM_READ_ONLY` and destructive-action flags do not apply to it. The three live smoke tests are
 not an exhaustive acceptance suite. Existing DM/group visibility, large histories, membership
 permissions, file access and your exact v11 configuration still need deployment-specific checks.
+
+## Multi-account and consumer regressions
+
+Account tests use synthetic token-to-identity fixtures and exercise interleaved selection,
+operator-default compatibility, seed removal/restart, a failed account beside a healthy one,
+explicit add/disable/recovery, wrong-user rotation, and protection of newly introduced private
+credential sources from already-running uploads. Separate callback tests cover permanent leases,
+wrong durable receipts, pinned template retries across restart, and outgoing-only echo suppression.
+Typing tests verify selected identity and membership denial; template tests reject dynamic logic
+and treat message metacharacters as data. Live two-account message passing remains an opt-in
+deployment acceptance step; private IDs, traces and service configuration are never test fixtures.
