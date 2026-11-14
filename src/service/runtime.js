@@ -121,12 +121,15 @@ async function applyChange(runtime, operation) {
   }
 }
 
-export async function serviceRuntime(env = { ...process.env }) {
+export async function singleAccountRuntime(env = { ...process.env }) {
   const file = settingsFile(env);
   const input = readInputs(env);
   const disk = readOverrides(file);
   const values = effectiveSettings(input.defaults, disk.overrides);
   const session = await createSession(sessionConfig(input.config, values));
+  if (env.MM_EXPECTED_USER_ID && session.userId !== env.MM_EXPECTED_USER_ID)
+    throw serviceError("ACCOUNT_MISMATCH");
+  session.accountId = env.MM_ACCOUNT_ID;
   const state = { input, disk, values, session, stop: undefined, loadedAt: Date.now() };
   const boundPort = values.http_port;
   const http = httpValues(state, boundPort);
@@ -164,4 +167,10 @@ export async function serviceRuntime(env = { ...process.env }) {
       await runtime.state.stop?.();
     },
   };
+}
+
+export async function serviceRuntime(env = { ...process.env }) {
+  const { hasAccounts } = await import("./account-store.js");
+  if (hasAccounts(env)) return (await import("./accounts.js")).multiAccountRuntime(env);
+  return singleAccountRuntime(env);
 }
