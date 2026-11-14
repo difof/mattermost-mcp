@@ -1,3 +1,4 @@
+import { sendOrigins } from "./send-origins.js";
 import { presentationStore } from "./post-presentation.js";
 import { inboxOperations } from "./inbox.js";
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync } from "node:fs";
@@ -14,7 +15,7 @@ export function retentionWindow(hours) {
 }
 
 /** SQLite opens by path; ensure the containing directory and the pre-created file are private. */
-function privateFile(file) {
+export function privateFile(file) {
   const directory = dirname(file);
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const owned = (st) =>
@@ -113,6 +114,7 @@ function transaction(db, run) {
 
 function cacheOperations(db, now, retentionMs, deferPrune) {
   const write = postWriter(db, retentionMs);
+  const sends = sendOrigins(db, now, retentionMs);
   const expire = db.prepare(
     "DELETE FROM posts WHERE (message IS NOT NULL AND createdAt<=?) OR (message IS NULL AND updatedAt<=?)",
   );
@@ -147,6 +149,7 @@ function cacheOperations(db, now, retentionMs, deferPrune) {
   if (!deferPrune) prune();
   return {
     database: db,
+    sends,
     presentation: presentationStore(
       db,
       (run) => transaction(db, run),
@@ -167,6 +170,7 @@ function cacheOperations(db, now, retentionMs, deferPrune) {
       const cutoff = now() - retentionMs;
       return transaction(db, () => {
         removeOld(cutoff);
+        sends.observe(record);
         return write(record, cutoff);
       });
     },
@@ -174,7 +178,10 @@ function cacheOperations(db, now, retentionMs, deferPrune) {
       const cutoff = now() - retentionMs;
       return transaction(db, () => {
         removeOld(cutoff);
-        return records.filter((record) => write(record, cutoff, authoritative));
+        return records.filter((record) => {
+          sends.observe(record);
+          return write(record, cutoff, authoritative);
+        });
       });
     },
     list: (options = {}) => list(options),
@@ -197,6 +204,7 @@ function cacheOperations(db, now, retentionMs, deferPrune) {
     prune() {
       const removed = prune();
       inbox.pruneReceipts();
+      sends.prune();
       return removed;
     },
     close: () => db.close(),
