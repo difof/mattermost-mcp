@@ -1,3 +1,4 @@
+import { trackedPost } from "../events/send-origins.js";
 import { pendingId, postRequestId } from "./post-request-id.js";
 import { z } from "zod";
 import { routeSegment } from "./route-params.js";
@@ -30,16 +31,14 @@ const postMessage = {
   resultScope: "post",
   messageText: (args) => args.message,
   handler: (args, { session }) =>
-    session.call((c) =>
-      c.createPost({
-        ...pendingId(args, session.userId, args.channel_id),
-        channel_id: args.channel_id,
-        message: args.message,
-        ...(args.root_id != null ? { root_id: args.root_id } : {}),
-        ...(args.file_ids != null ? { file_ids: args.file_ids } : {}),
-        ...(args.props != null ? { props: args.props } : {}),
-      }),
-    ),
+    trackedPost(session, {
+      ...pendingId(args, session.userId, args.channel_id),
+      channel_id: args.channel_id,
+      message: args.message,
+      ...(args.root_id != null ? { root_id: args.root_id } : {}),
+      ...(args.file_ids != null ? { file_ids: args.file_ids } : {}),
+      ...(args.props != null ? { props: args.props } : {}),
+    }),
 };
 // ---------------------------------------------------------------------------
 // reply_thread — POST /posts (with root_id)
@@ -61,14 +60,12 @@ const replyThread = {
   resultScope: "post",
   messageText: (args) => args.message,
   handler: (args, { session }) =>
-    session.call((c) =>
-      c.createPost({
-        ...pendingId(args, session.userId, args.channel_id),
-        channel_id: args.channel_id,
-        message: args.message,
-        root_id: args.root_id,
-      }),
-    ),
+    trackedPost(session, {
+      ...pendingId(args, session.userId, args.channel_id),
+      channel_id: args.channel_id,
+      message: args.message,
+      root_id: args.root_id,
+    }),
 };
 // ---------------------------------------------------------------------------
 // get_channel_posts — GET /channels/{id}/posts
@@ -273,13 +270,11 @@ const sendDm = {
     const channel = await session.call((c) =>
       members.length === 2 ? c.createDirectChannel(members) : c.createGroupChannel(members),
     );
-    return session.call((c) =>
-      c.createPost({
-        channel_id: channel.id,
-        message: args.message,
-        ...pendingId(args, session.userId, channel.id),
-      }),
-    );
+    return trackedPost(session, {
+      channel_id: channel.id,
+      message: args.message,
+      ...pendingId(args, session.userId, channel.id),
+    });
   },
 };
 // ---------------------------------------------------------------------------
