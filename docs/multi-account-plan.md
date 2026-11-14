@@ -1,6 +1,15 @@
 # Mattermost multi-account implementation plan
 
-Status: proposed architecture; feature implementation pending.
+Status: shared-service multi-account routing and consumer transport implemented; broader storage/event redesign remains proposed.
+See [the current public contract](multi-account.md) for exact supported behavior.
+
+Current scope preserves the proven identity/access-scoped cache files and legacy counters.
+A separate private SQLite account registry owns verified credentials and explicit account lifecycle.
+Shared HTTP clients can select accounts, use permanent subscriptions, authenticated durable
+consumer receipts, pinned Mustache notifications and guarded typing. Standalone login commands,
+full single-database consolidation and edited/deleted notification journaling remain future work.
+An explicit operator-configured default account is supported for legacy clients; invalid supplied
+selectors never fall back.
 
 This document describes reusable implementation contracts and acceptance criteria. Keep
 operator-specific deployment observations and live-test evidence outside version control.
@@ -26,8 +35,9 @@ Keep native JavaScript ESM and `node:sqlite`; the conditional GoJet request does
 
 The current implementation has one authenticated account per runtime, JSON settings overrides,
 inline SQLite schema updates, scoped post/directory caches and persistent timed subscriptions.
-Message callbacks cover new posts; edits/deletes update snapshots. Account selection, permanent
-subscriptions, versioned migrations and database-authoritative configuration remain to be built.
+Message callbacks cover new posts; edits/deletes update snapshots. Account selection and permanent
+subscriptions are now implemented for the shared service; full versioned cache migration and
+database-authoritative settings consolidation remain proposed.
 
 Relevant owners: [runtime](../src/service/runtime.js),
 [tool dispatch](../src/tools/registry.js), [cache](../src/events/cache.js),
@@ -37,7 +47,10 @@ Relevant owners: [runtime](../src/service/runtime.js),
 
 ## Contracts to preserve across phases
 
-### One authoritative database
+### Future storage consolidation
+
+The current release retains separate proven cache/settings stores to avoid an unnecessary migration.
+The following consolidation target is a future project, not a prerequisite for the deployed routing:
 
 Use one owner-only SQLite database for settings, account credentials, account/scoped caches,
 directories, event records, subscriptions and delivery progress. The seed file may contain an
@@ -72,8 +85,8 @@ activation; another user requires another account. Reject duplicate verified ide
 a later explicit design decision explains their semantics.
 
 Resolve an account before guardrails, resource checks or network calls, then pin it for the
-entire request/retry. With multiple configured accounts, omission is an error; a sole configured
-account may retain existing no-selector behavior. Never silently switch to another account when
+entire request/retry. With multiple configured accounts, omission is an error unless an operator explicitly configured
+a default account; a sole configured account retains existing no-selector behavior. Never silently switch to another account when
 the chosen account is disabled or unhealthy. No mutable global current-account setting.
 
 Account/access scope qualifies posts, directory entries, recovery checkpoints, subscriptions,
@@ -365,11 +378,15 @@ Next action: concrete file/module and expected result
 A phase is incomplete without this handoff and its downstream edits. Reopen a completed phase
 when later evidence invalidates its contract. Never mark a live check complete from mock success.
 
-### Initial handoff
+### Current handoff
 
-Status: design only; implementation begins with P0 verification and P1 storage contracts.
-Known dependencies: import legacy JSON settings and scoped caches; make account selection
-explicit; add event kinds, account-qualified callbacks, permanent subscription lifetimes,
-versioned notification templates, authenticated consumer admission and guarded typing transport.
-Next: finalize the account/scope keys, migration ledger and import fixtures before changing
-persistence. Do not build multi-account workers on the old single-account schema.
+Status: account routing/consumer transport slice implemented; full P1–P7 redesign is not claimed.
+Actual schema: account registry version 1 with verified identities and credential status;
+existing identity/scope cache schemas retained, adding bounded send intents and pending callbacks.
+API: account_id routing, explicit operator default, account discovery/admin lifecycle, permanent
+registrations, durable receipt opt-in, pinned template payloads and guarded typing.
+Synthetic verification: account isolation/lifecycle, existing API/cache regressions, consumer
+receipt/restart/template behavior and secret input protection. Deployment evidence remains private.
+Downstream decision: defer consolidation and edited/deleted event journaling until separately
+needed; retain current cache scope/read-count/lease identities without destructive migration.
+Next: complete opt-in two-account deployment acceptance using the documented public contracts.
