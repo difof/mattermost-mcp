@@ -127,6 +127,7 @@ export async function startEvents({
       cache,
       targets,
       account,
+      accountId: session.accountId ?? session.userId,
       deferred: true,
       authorize: async (ids, signal, records) => {
         const access = await cacheAccess(session, cache, signal);
