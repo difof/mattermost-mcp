@@ -37,6 +37,9 @@ export function selectPost(post, channelType, me, deleted = false) {
   return {
     ...base,
     senderId: post.user_id,
+    ...(typeof post.pending_post_id === "string" && /^mcp-[0-9a-f]{64}$/.test(post.pending_post_id)
+      ? { pendingPostId: post.pending_post_id }
+      : {}),
     rootId: post.root_id || post.id,
     channelType,
     direction: post.user_id === me.id ? "outgoing" : "incoming",
