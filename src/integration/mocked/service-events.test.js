@@ -200,7 +200,7 @@ it("caches received and sent posts locally and delivers only an explicitly subsc
     };
     service = await startService(env);
     const catalog = await service.client.listTools();
-    expect(catalog.tools).toHaveLength(44);
+    expect(catalog.tools).toHaveLength(46);
     expect(
       catalog.tools.find((t) => t.name === "list_cached_messages").annotations.readOnlyHint,
     ).toBe(false);
