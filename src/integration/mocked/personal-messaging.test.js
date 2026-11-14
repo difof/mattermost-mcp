@@ -7,7 +7,7 @@ const THREAD_FLAGS = {
 };
 describe("personal messaging through MCP and the Mattermost HTTP API", () => {
   const fixture = useMattermost({ guardrails: { allowDestructive: true } });
-  it("advertises all 37 tools with schemas and accurate write/destructive hints", async () => {
+  it("advertises all 38 tools with schemas and accurate write/destructive hints", async () => {
     const { tools } = await fixture().listTools();
     const readTools = [
       "api_search",
@@ -33,6 +33,7 @@ describe("personal messaging through MCP and the Mattermost HTTP API", () => {
       "set_status",
       "set_custom_status",
       "post_message",
+      "publish_typing",
       "reply_thread",
       "edit_post",
       "delete_post",
