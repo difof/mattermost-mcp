@@ -1,5 +1,5 @@
 import { openLeaseStore } from "./subscription-store.js";
-import { deliverCallback } from "./callbacks.js";
+import { deliverCallback, prepareCallback } from "./callbacks.js";
 import { log } from "../log.js";
 
 /** A lease advances through the cache, not a second copy of the message stream. */
@@ -7,6 +7,7 @@ export function createSubscriptions({
   cache,
   targets,
   account,
+  accountId = account,
   authorize,
   now = Date.now,
   send = deliverCallback,
@@ -36,7 +37,8 @@ export function createSubscriptions({
   function retry(row) {
     if (stopSignal.signal.aborted) return;
     leases.retry(row.id, now() + Math.min(60000, 1000 * 2 ** Math.min(6, row.failures)));
-    if (!row.failures) log("Message callback pending; retrying until its subscription expires");
+    if (!row.failures)
+      log("Message callback pending; account=" + accountId + " subscription=" + row.id);
   }
   async function dispatch(row, item) {
     const lease = leases.get(row.id),
@@ -50,13 +52,12 @@ export function createSubscriptions({
       AbortSignal.timeout(Math.max(1, Math.min(10000, lease.expires - currentTime))),
     ]);
     try {
-      await send(
-        targets.resolve({ callback_url: row.target }),
-        row.id,
-        account,
-        item.record,
-        signal,
+      const target = targets.resolve({ callback_url: row.target });
+      const prepared = leases.pending(row.id, item.seq, () =>
+        prepareCallback(target, row.id, account, item.record, accountId),
       );
+      await send(target, row.id, account, item.record, signal, prepared);
+      log("Message callback admitted; account=" + accountId + " delivery=" + prepared.digest);
       leases.advance(row.id, item.seq);
       dirty = true;
     } catch {
@@ -72,7 +73,21 @@ export function createSubscriptions({
     for (const row of leases.due(now())) {
       if (row.cursor >= hi) continue;
       const item = cache.nextMatching(JSON.parse(row.filters), row.cursor, row.started);
-      if (item) pending.push({ row, item });
+      if (
+        item?.record.direction === "outgoing" &&
+        JSON.parse(row.filters).includeServiceOutgoing === false &&
+        cache.sends?.busy()
+      )
+        continue;
+      if (
+        item &&
+        item.record.direction === "outgoing" &&
+        JSON.parse(row.filters).includeServiceOutgoing === false &&
+        cache.sends?.known(item.record.postId)
+      ) {
+        leases.advance(row.id, item.seq);
+        dirty = true;
+      } else if (item) pending.push({ row, item });
       else leases.advance(row.id, hi);
     }
     if (!pending.length) return;
@@ -100,6 +115,7 @@ export function createSubscriptions({
             const allowed = decision(fresh.record.channelId, fresh.record);
             if (allowed === true) await dispatch(row, fresh);
             else if (allowed === undefined) retry(row);
+            else leases.advance(row.id, fresh.seq);
           }
           // A changed candidate needs its own authorization on the next tick.
         }
@@ -131,7 +147,11 @@ export function createSubscriptions({
     },
     register(args, filters) {
       const target = targets.resolve(args);
-      const lease = leases.register(target.url, filters, args.ttl_seconds);
+      const lease = leases.register(
+        target.url,
+        filters,
+        args.persistent === true ? null : args.ttl_seconds,
+      );
       wake();
       return lease;
     },
