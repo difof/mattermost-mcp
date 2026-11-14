@@ -1,3 +1,4 @@
+import { trackedBody } from "../events/send-origins.js";
 import { z } from "zod";
 import { describeOperation, resolveOperation, searchOperations } from "../api/discovery.js";
 import { assertApiAccess, operationGuard } from "../api/policy.js";
@@ -110,7 +111,22 @@ const apiCall = {
         if (anchor !== undefined) await resources.assertAnchor(anchor, args.path.channel_id);
       }
     }
-    return session.call((client) => callApi(client, operation, args, session.config.uploads));
+    const createsPost =
+      operation.method === "POST" &&
+      operation.path === "/api/v4/posts" &&
+      args.body &&
+      typeof args.body === "object";
+    const body = createsPost ? trackedBody(session, args.body) : args.body;
+    try {
+      const result = await session.call((client) =>
+        callApi(client, operation, createsPost ? { ...args, body } : args, session.config.uploads),
+      );
+      if (createsPost && result.data?.id)
+        session.cache?.sends.complete(body.pending_post_id, result.data.id);
+      return result;
+    } finally {
+      if (createsPost) session.cache?.sends.finish(body.pending_post_id);
+    }
   },
 };
 
