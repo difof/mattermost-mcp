@@ -253,3 +253,90 @@ it("requires operator-enabled destinations, scopes credentials by origin, never 
   });
   expect(req.mock.lastCall[1].body).not.toContain("private-body");
 });
+
+it("keeps permanent leases and a pinned template payload across restart and validates durable consumer receipts", async () => {
+  const { directory } = config(),
+    file = join(directory, "permanent.db");
+  const { notificationTemplate } = await import("./templates.js");
+  let target = {
+    kind: "webhook",
+    url: hookA,
+    headers: { authorization: "Bearer fixture_secret" },
+    receipt: true,
+    template: notificationTemplate("first {{postId}}"),
+  };
+  const targets = { resolve: () => target },
+    calls = [];
+  let good = false,
+    cache = await openCache(file);
+  let leases = createSubscriptions({
+    cache,
+    targets,
+    account: "scope",
+    accountId: "assistant",
+    authorize: async () => () => true,
+  });
+  cleanups.push(async () => {
+    await leases.stop();
+    cache.close();
+  });
+  vi.stubGlobal("fetch", async (_url, opts) => {
+    const payload = JSON.parse(opts.body);
+    calls.push(payload);
+    return Response.json({ id: good ? payload.id : "wrong", accepted: true });
+  });
+  const lease = leases.register(
+    { callback_url: hookA, persistent: true },
+    { direction: "incoming" },
+  );
+  expect(lease).toMatchObject({ persistent: true, expiresAt: null });
+  cache.apply(post(70, { direction: "incoming" }));
+  leases.wake();
+  await vi.advanceTimersByTimeAsync(80);
+  expect(calls).toHaveLength(1);
+  expect(leases.list()[0].deliveryFailures).toBe(1);
+  await leases.stop();
+  cache.close();
+  target = { ...target, template: notificationTemplate("changed {{message}}") };
+  cache = await openCache(file);
+  leases = createSubscriptions({
+    cache,
+    targets,
+    account: "scope",
+    accountId: "assistant",
+    authorize: async () => () => true,
+  });
+  good = true;
+  await vi.advanceTimersByTimeAsync(2100);
+  expect(calls).toHaveLength(2);
+  expect(calls[1]).toEqual(calls[0]);
+  expect(calls[0]).toMatchObject({
+    accountId: "assistant",
+    eventType: "posted",
+    text: "first " + id(70),
+  });
+  vi.setSystemTime(start + 49 * 3600000);
+  leases.prune();
+  expect(leases.list()).toHaveLength(1);
+  expect(cache.database.prepare("SELECT count(*) AS n FROM pending_callbacks").get().n).toBe(0);
+});
+it("suppresses only known service outgoing echoes while retaining incoming posts from another controlled account", async () => {
+  const h = await fixture(),
+    sent = [];
+  vi.stubGlobal("fetch", async (_url, opts) => {
+    sent.push(JSON.parse(opts.body));
+    return new Response(null, { status: 204 });
+  });
+  h.leases.register({ callback_url: hookA, persistent: true }, { includeServiceOutgoing: false });
+  h.cache.sends.begin("send-one");
+  h.cache.sends.complete("send-one", id(80));
+  h.cache.sends.finish("send-one");
+  h.cache.sends.begin("send-two");
+  h.cache.sends.complete("send-two", id(81));
+  h.cache.sends.finish("send-two");
+  h.cache.apply(post(80, { direction: "outgoing" }));
+  h.cache.apply(post(81, { direction: "incoming" }));
+  h.leases.wake();
+  await vi.advanceTimersByTimeAsync(1200);
+  expect(sent.map((p) => p.postId)).toEqual([id(81)]);
+});
