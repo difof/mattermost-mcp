@@ -19,6 +19,7 @@ export function inheritUploadProtection(previous, next) {
     });
   }
   for (const key of old.forbidden) current.forbidden.add(key);
+  for (const path of old.paths) current.paths.add(path);
 }
 
 function within(root, file) {
@@ -48,6 +49,12 @@ function privatePaths(env, extraSecrets) {
       join(env.XDG_STATE_HOME || join(homedir(), ".local", "state"), "mattermost-mcp"),
       ...[
         env.MM_EVENTS_STATE_DIR,
+        env.MM_ACCOUNTS_FILE,
+        env.MM_ACCOUNTS_DB,
+        ...(env.MM_ACCOUNTS_DB
+          ? ["-journal", "-wal", "-shm"].map((s) => env.MM_ACCOUNTS_DB + s)
+          : []),
+        ...(env.MM_PRIVATE_ACCOUNT_FILES ? JSON.parse(env.MM_PRIVATE_ACCOUNT_FILES) : []),
         env.MM_SETTINGS_FILE,
         env.MM_TOKEN_FILE,
         env.MM_HTTP_TOKEN_FILE,
@@ -103,6 +110,17 @@ export function protectUploadRoots(roots, env = process.env, extraSecrets = []) 
         throw new Error("private files and hard-linked files cannot be uploaded");
     },
   };
-  policies.set(access, { forbidden, rootIdentities: JSON.stringify(pinned) });
+  policies.set(access, { paths, forbidden, rootIdentities: JSON.stringify(pinned) });
   return access;
+}
+
+// Account inputs can be added while another account keeps serving uploads.
+export function addProtectedUploadFiles(access, files) {
+  const policy = policies.get(access);
+  if (!policy) return;
+  for (const file of files) {
+    policy.paths.add(resolve(file));
+    const st = statSync(file, { bigint: true, throwIfNoEntry: false });
+    if (st) policy.forbidden.add(identity(st));
+  }
 }
