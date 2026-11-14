@@ -25,7 +25,23 @@ export function toMcpTool(def) {
     name: def.name,
     title: def.title,
     description: def.description,
-    inputSchema: { type: "object", ...schema },
+    inputSchema: {
+      type: "object",
+      ...schema,
+      ...(!def.accountIndependent
+        ? {
+            properties: {
+              ...schema.properties,
+              account_id: {
+                type: "string",
+                pattern: "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$",
+                description:
+                  "Configured account. Required with multiple accounts unless an operator default is configured.",
+              },
+            },
+          }
+        : {}),
+    },
     annotations: {
       title: def.title,
       readOnlyHint: !isWrite && !def.localWrite,
@@ -49,7 +65,16 @@ function formatResult(result, compact = false) {
 export async function dispatchToolCall(tools, ctx, name, rawArgs) {
   const tool = tools.find((t) => t.name === name);
   if (!tool) throw new McpError(ErrorCode.InvalidParams, `unknown tool: ${name}`);
-  const parsed = tool.inputSchema.safeParse(rawArgs ?? {});
+  const { account_id, ...input } =
+    rawArgs && typeof rawArgs === "object" && !Array.isArray(rawArgs) ? rawArgs : {};
+  if (
+    account_id !== undefined &&
+    (typeof account_id !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(account_id))
+  )
+    return text("Invalid account_id", true);
+  const parsed = tool.inputSchema.safeParse(
+    rawArgs && (typeof rawArgs !== "object" || Array.isArray(rawArgs)) ? rawArgs : input,
+  );
   if (!parsed.success) {
     const detail = parsed.error.issues
       .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
@@ -57,7 +82,27 @@ export async function dispatchToolCall(tools, ctx, name, rawArgs) {
     return text(`invalid arguments for ${name}: ${detail}`, true);
   }
   const args = parsed.data;
+  let lease;
   try {
+    if (!tool.accountIndependent) {
+      if (ctx.session.accounts) {
+        lease = ctx.session.accounts.resolve(account_id);
+        ctx = { ...ctx, session: lease.session };
+      } else if (
+        account_id !== undefined &&
+        account_id !== (ctx.session.accountId ?? ctx.session.userId)
+      ) {
+        throw new Error("Unknown account_id");
+      }
+      const selected = ctx.session;
+      const session = Object.create(selected);
+      session.call = (fn) =>
+        withRequestSignal(ctx.signal, () => {
+          ctx.signal?.throwIfAborted();
+          return selected.call(fn);
+        });
+      ctx = { ...ctx, session };
+    }
     const policy = tool.guard ? tool.guard(args) : tool;
     const guard = {
       name: tool.name,
@@ -88,6 +133,8 @@ export async function dispatchToolCall(tools, ctx, name, rawArgs) {
     if (err instanceof GuardrailError) return text(err.message, true);
     // Surface Mattermost API errors verbatim; never swallow.
     return text(formatMattermostError(err), true);
+  } finally {
+    lease?.release?.();
   }
 }
 /** Wire tools/list and tools/call onto a low-level MCP Server. */
@@ -101,19 +148,8 @@ export function registerTools(server, tools, ctx) {
     const signal = combineSignals(ctx.exchange?.signal, extra?.signal);
     // Limit cancellation to operations performed on this caller's behalf.
     // Background subscriptions and shared listener/refresh tasks keep their own lifetime.
-    const session = Object.create(ctx.session);
-    session.call = (fn) =>
-      withRequestSignal(signal, () => {
-        signal?.throwIfAborted();
-        return ctx.session.call(fn);
-      });
     const run = () =>
-      dispatchToolCall(
-        tools,
-        { ...ctx, session, signal, callerSessionId },
-        params.name,
-        params.arguments,
-      );
+      dispatchToolCall(tools, { ...ctx, signal, callerSessionId }, params.name, params.arguments);
     if (!ctx.exchange) return run();
     return ctx.exchange.track(async () => {
       const reply = await run();
