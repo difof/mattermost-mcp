@@ -1,7 +1,7 @@
 # mattermost-mcp
 
 Use your Mattermost account from an MCP agent: read conversations, send DMs and replies,
-manage channels, and work with files. **37 core tools** plus seven optional inbox, directory and subscription tools, native JavaScript, stdio or shared Streamable HTTP, Node.js 20+.
+manage channels, and work with files. **39 core tools** plus seven optional inbox, directory and subscription tools, native JavaScript, stdio or shared Streamable HTTP, Node.js 20+.
 
 This is [difof's fork](https://github.com/difof/mattermost-mcp) of
 [BryanBerger98/mattermost-mcp](https://github.com/BryanBerger98/mattermost-mcp), with fixes for
@@ -40,7 +40,9 @@ The process uses the saved login. For environment-based credentials, see
 
 **Install this fork from source.** The upstream npm package does not include this fork's changes.
 
-Use the [shared HTTP service and systemd installer](docs/shared-service.md) for multiple local clients, a rolling SQLite inbox (default 48 hours), exact conversation lookup, and temporary callbacks. The optional [admin connection](docs/admin-settings.md) can change settings live or reload rotated credentials.
+Use [multi-account routing and authenticated consumers](docs/multi-account.md) for independent account clients, permanent subscriptions, templated callbacks and typing.
+
+Use the [shared HTTP service and systemd installer](docs/shared-service.md) for multiple local clients, a rolling SQLite inbox (default 48 hours), exact conversation lookup, and timed or permanent callbacks. The optional [admin connection](docs/admin-settings.md) can change settings live or reload rotated credentials.
 
 ## Agent skill
 
@@ -64,10 +66,11 @@ installing the MCP server alone does not register the skill globally.
 
 | Area               | Tools | Capabilities                                                              |
 | ------------------ | ----: | ------------------------------------------------------------------------- |
-| Messaging          |    13 | History, threads, search, messages, DMs/groups, edits, pins and reactions |
+| Messaging          |    14 | History, threads, search, messages, DMs/groups, edits, pins and reactions |
 | Channels and teams |    12 | Listings, channel creation, membership, unread counts and read state      |
 | Users and presence |     6 | User lookup, search, identity and status                                  |
 | Files              |     3 | Upload, metadata and bounded downloads                                    |
+| Account routing    |     1 | Verified account discovery and health                                     |
 | Full REST API      |     3 | Search operations, inspect schemas on demand, and call the API            |
 
 A PAT uses your account's permissions. `api_search` → `api_describe` → `api_call` exposes all
@@ -97,6 +100,7 @@ HTTP stack; real server permissions and deployment behavior still need live vali
 
 - [Tool reference and personal-account workflows](docs/tools.md)
 - [Authentication, configuration and guardrails](docs/configuration.md)
+- [Multi-account configuration and consumer contracts](docs/multi-account.md)
 - [Multi-account and subscription implementation plan](docs/multi-account-plan.md)
 - [Testing, mock design and optional live checks](docs/testing.md)
 - [Mattermost API coverage and version boundaries](docs/api-coverage.md)
